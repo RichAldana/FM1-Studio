@@ -153,16 +153,27 @@ impl MidiParser {
     }
 }
 
+/// Encoder detents from MIDI are played at most one per this many ms. A controller sends a turn a few detents a
+/// message (LOOM-8's PANEL MIDI: what it read in one frame of its own); played as they come, the emulator would turn
+/// them in 8 ms each, faster than a hand, and a firmware that speeds up a fast turn (Chordism) would jump: 38 or 36
+/// for 30 detents. Chordism counts them one each from 16 ms apart; 20 for a margin (tests/enc_bursts.rs): 50 a second.
+const ENC_PACE_MS: u64 = 20;
+/// Detents waiting at most (the rest of a fast spin: 0.8 s of them)
+const ENC_BACKLOG: i32 = 40;
+
 struct Router {
     mode: MidiMode,
     mapper: Option<Mapper>,
     parser: MidiParser,
     outs: Vec<Out>,
+    /// detents waiting per encoder (+ clockwise), and the machine cycle the next may go at
+    enc_q: [i32; 8],
+    enc_due: [u64; 8],
 }
 
 impl Router {
     fn new() -> Self {
-        Router { mode: MidiMode::ClockOnly, mapper: None, parser: MidiParser::default(), outs: Vec::new() }
+        Router { mode: MidiMode::ClockOnly, mapper: None, parser: MidiParser::default(), outs: Vec::new(), enc_q: [0; 8], enc_due: [0; 8] }
     }
 
     fn set_mode(&mut self, m: &mut Machine, mode: MidiMode, profile: Option<Box<Profile>>) {
@@ -171,6 +182,7 @@ impl Router {
             mp.release_all(&mut |o| self.outs.push(o));
         }
         self.flush(m);
+        self.enc_q = [0; 8];
         self.mapper = profile.map(|p| Mapper::new(*p));
         self.mode = mode;
         self.parser = MidiParser::default();
@@ -185,7 +197,7 @@ impl Router {
                     }
                     m.soc.periph.apply(&Action::Key { id, down });
                 }
-                Out::Enc { enc, clicks } => m.soc.periph.apply(&Action::Enc { enc, clicks }),
+                Out::Enc { enc, clicks } => self.enc(enc, clicks),
                 Out::Adc { ch, value } => m.soc.periph.apply(&Action::Adc { ch, value }),
                 Out::Midi { bytes, len } => {
                     for &b in &bytes[..len as usize] {
@@ -193,6 +205,25 @@ impl Router {
                     }
                 }
                 _ => {} // Record, Labels, KeysMode, Learned: front-end matters
+            }
+        }
+    }
+
+    fn enc(&mut self, enc: u8, clicks: i32) {
+        if let Some(q) = self.enc_q.get_mut(enc as usize) {
+            *q = (*q + clicks).clamp(-ENC_BACKLOG, ENC_BACKLOG);
+        }
+    }
+
+    /// The detents due now, one per encoder (called at each turn of the machine loop).
+    fn tick(&mut self, m: &mut Machine) {
+        let now = m.soc.periph.cycles;
+        for i in 0..8 {
+            let q = self.enc_q[i];
+            if q != 0 && now >= self.enc_due[i] {
+                m.soc.periph.apply(&Action::Enc { enc: i as u8, clicks: q.signum() });
+                self.enc_q[i] -= q.signum();
+                self.enc_due[i] = now + m.soc.periph.hz / 1000 * ENC_PACE_MS;
             }
         }
     }
@@ -424,11 +455,16 @@ impl Engine {
                 ext[i] = clamp16(extf[i]);
             }
         }
+        // the mixer: each source at its volume and balance, then the master
+        use crate::dsp::{get_f, lr, BAL_EMU, BAL_EXT, MASTER};
+        let (be, bx, gm) = (get_f(&BAL_EMU), get_f(&BAL_EXT), get_f(&MASTER));
+        let ge = lr(g_emu, be, gm);
+        let gx = lr(g_ext, bx, gm);
         let (mut pe, mut px) = (0u32, 0u32);
         let mut mix = vec![0f32; n];
         for i in 0..n {
-            let e = emu[i] as f32 * g_emu;
-            let x = ext[i] as f32 * g_ext;
+            let e = emu[i] as f32 * ge[i & 1];
+            let x = ext[i] as f32 * gx[i & 1];
             pe = pe.max(e.abs() as u32);
             px = px.max(x.abs() as u32);
             mix[i] = e + x;
@@ -441,7 +477,7 @@ impl Engine {
         }
         sh.peak_emu.fetch_max(pe, Ordering::Relaxed);
         sh.peak_ext.fetch_max(px, Ordering::Relaxed);
-        crate::recorder::feed(&emu, &ext, g_emu, g_ext_rec);
+        crate::recorder::feed(&emu, &ext, ge, lr(g_ext_rec, bx, gm));
     }
 
     pub fn lcd(&self, out: &mut [u16]) {
@@ -501,11 +537,14 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
     while !sh.quit.load(Ordering::Relaxed) {
         while let Ok(c) = rx.try_recv() {
             match c {
+                // (the screen's encoders too: a drag sends several detents at once)
+                Cmd::Act(Action::Enc { enc, clicks }) => router.enc(enc, clicks),
                 Cmd::Act(a) => m.soc.periph.apply(&a),
                 Cmd::Midi(b) => router.bytes(m, sh, &b),
                 Cmd::Mode(mode, p) => router.set_mode(m, mode, p),
             }
         }
+        router.tick(m);
         let real = start.elapsed().as_secs_f64() * 1000.0 - offset_ms;
         let emu_ms = m.soc.periph.cycles as f64 * 1000.0 / m.soc.periph.hz as f64;
         if real - emu_ms > 250.0 {

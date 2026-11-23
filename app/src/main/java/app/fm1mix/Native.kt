@@ -36,6 +36,8 @@ object Native {
     /** [low]: small queues; [offsetMs] > 0 delays the real FM-1, < 0 the emulated one */
     external fun setLatency(low: Boolean, offsetMs: Int)
     external fun setLimiter(on: Boolean)
+    /** The mixer: each source's balance (-1 left .. 1 right) and the master volume (1: as is). */
+    external fun setMix(balEmu: Float, balExt: Float, master: Float)
     /** out = [the captured FM-1's queue (ms), its clock against the phone's (ppm), the limiter's reduction (dB)] */
     external fun audioInfo(out: FloatArray)
 

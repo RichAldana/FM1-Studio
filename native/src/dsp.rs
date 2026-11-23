@@ -7,10 +7,31 @@
 //!    two loud sources summed never clip hard.
 
 use std::collections::VecDeque;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The limiter on the output and on the recorded mix (the settings' switch).
 pub static LIMIT: AtomicBool = AtomicBool::new(true);
+
+/// The mixer's balances (-1 left .. 1 right, 0 centre) and master (1: as is), f32 bits (the settings' Mixer page);
+/// the sources' volumes come with each read (AudioIo).
+pub static BAL_EMU: AtomicU32 = AtomicU32::new(0);
+pub static BAL_EXT: AtomicU32 = AtomicU32::new(0);
+pub static MASTER: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+pub fn set_f(a: &AtomicU32, v: f32) {
+    a.store(v.to_bits(), Ordering::Relaxed);
+}
+pub fn get_f(a: &AtomicU32) -> f32 {
+    f32::from_bits(a.load(Ordering::Relaxed))
+}
+
+/// A stereo source's gains, left and right: its volume [g], its balance [bal] (centre: both at g; to one side, the
+/// other channel down, to silence at the end: a balance, not a pan, so a stereo source keeps its own picture) and
+/// [master].
+pub fn lr(g: f32, bal: f32, master: f32) -> [f32; 2] {
+    let b = bal.clamp(-1.0, 1.0);
+    [g * master * (1.0 - b.max(0.0)), g * master * (1.0 + b.min(0.0))]
+}
 
 /// how far the reading speed may move from 1 (0.3 %: 5 cents, beyond any crystal's drift; transients only)
 const MAX_DEV: f64 = 0.003;
@@ -202,6 +223,14 @@ impl Limiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn balance_keeps_the_centre_and_fades_one_side() {
+        assert_eq!(lr(0.8, 0.0, 1.0), [0.8, 0.8]);
+        assert_eq!(lr(1.0, 0.5, 1.0), [0.5, 1.0]);
+        assert_eq!(lr(1.0, -1.0, 0.5), [0.5, 0.0]);
+        assert_eq!(lr(1.0, 3.0, 1.0), [0.0, 1.0]);
+    }
 
     /// a 44.1 kHz producer at `ppm` off the consumer's clock, delivering in bursts of `burst` frames
     fn run(ppm: f64, burst: usize, target: usize, seconds: f64) -> (DriftReader, Vec<f32>, VecDeque<i16>, f64) {

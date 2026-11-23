@@ -305,6 +305,15 @@ pub extern "system" fn Java_app_fm1mix_Native_setLimiter(_e: JNIEnv, _c: JClass,
     crate::dsp::LIMIT.store(on != 0, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The mixer's balances (-1 .. 1) and master volume (1: as is); the volumes come with readMixed.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_setMix(_e: JNIEnv, _c: JClass, bal_emu: jfloat, bal_ext: jfloat, master: jfloat) {
+    use crate::dsp::{set_f, BAL_EMU, BAL_EXT, MASTER};
+    set_f(&BAL_EMU, bal_emu);
+    set_f(&BAL_EXT, bal_ext);
+    set_f(&MASTER, master.clamp(0.0, 2.0));
+}
+
 /// out = [the captured FM-1's queue (ms), its clock against the phone's (ppm), the limiter's reduction (dB)]
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_audioInfo(env: JNIEnv, _c: JClass, out: jni::objects::JFloatArray) {

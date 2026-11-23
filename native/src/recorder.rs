@@ -216,12 +216,12 @@ impl Track {
         })
     }
 
-    fn push(&mut self, emu: &[i16], ext: &[i16], g_emu: f32, g_ext: f32) -> std::io::Result<()> {
+    fn push(&mut self, emu: &[i16], ext: &[i16], g_emu: [f32; 2], g_ext: [f32; 2]) -> std::io::Result<()> {
         let n = emu.len().min(ext.len()) & !1;
         self.tmp.clear();
         for i in 0..n {
             let v = match self.src {
-                Source::Mix => emu[i] as f32 * g_emu + ext[i] as f32 * g_ext,
+                Source::Mix => emu[i] as f32 * g_emu[i & 1] + ext[i] as f32 * g_ext[i & 1],
                 Source::Emu => emu[i] as f32,
                 Source::Ext => ext[i] as f32,
             };
@@ -248,8 +248,8 @@ impl Track {
 struct Block {
     emu: Vec<i16>,
     ext: Vec<i16>,
-    g_emu: f32,
-    g_ext: f32,
+    g_emu: [f32; 2],
+    g_ext: [f32; 2],
 }
 
 #[derive(Default)]
@@ -316,7 +316,7 @@ impl Recorder {
     }
 
     /// One block from the mixer (`emu` and `ext` stereo interleaved, same length), never waiting.
-    pub fn feed(&self, emu: &[i16], ext: &[i16], g_emu: f32, g_ext: f32) {
+    pub fn feed(&self, emu: &[i16], ext: &[i16], g_emu: [f32; 2], g_ext: [f32; 2]) {
         let Some(tx) = self.tx.as_ref() else { return };
         let n = emu.len().min(ext.len()) & !1;
         let b = Block { emu: emu[..n].to_vec(), ext: ext[..n].to_vec(), g_emu, g_ext };
@@ -344,7 +344,8 @@ impl Recorder {
 pub static REC: Mutex<Option<Recorder>> = Mutex::new(None);
 
 /// Called by the mixer for every block: hands it to the recording if there is one (never waits for the lock).
-pub fn feed(emu: &[i16], ext: &[i16], g_emu: f32, g_ext: f32) {
+/// The gains are per channel (left, right): the mixer's volume, balance and master.
+pub fn feed(emu: &[i16], ext: &[i16], g_emu: [f32; 2], g_ext: [f32; 2]) {
     if let Ok(g) = REC.try_lock() {
         if let Some(r) = g.as_ref() {
             r.feed(emu, ext, g_emu, g_ext);
@@ -433,9 +434,9 @@ mod tests {
         let emu: Vec<i16> = (0..512).map(|i| (i * 10) as i16).collect();
         let ext: Vec<i16> = vec![1000; 512];
         for _ in 0..100 {
-            r.feed(&emu, &ext, 0.5, 2.0);
+            r.feed(&emu, &ext, [0.5; 2], [2.0; 2]);
         }
-        r.feed(&[30000, 30000], &[30000, 30000], 1.0, 1.0); // clipped in 16-bit, not wrapped
+        r.feed(&[30000, 30000], &[30000, 30000], [1.0; 2], [1.0; 2]); // clipped in 16-bit, not wrapped
         assert_eq!(r.stop().unwrap(), 100 * 256 + 1);
         let b = bytes(&p);
         assert_eq!(u32_at(&b, 40), (100 * 256 + 1) * 4);
@@ -451,7 +452,7 @@ mod tests {
         let (pa, pb) = (tmp("emu.wav"), tmp("fm1.wav"));
         let r = Recorder::start(vec![(open_rw(&pa), Source::Emu), (open_rw(&pb), Source::Ext)], Quality::CD).unwrap();
         for k in 0..50i16 {
-            r.feed(&[k, -k, k, -k], &[100 + k, 200 + k, 100 + k, 200 + k], 0.0, 0.0);
+            r.feed(&[k, -k, k, -k], &[100 + k, 200 + k, 100 + k, 200 + k], [0.0; 2], [0.0; 2]);
         }
         assert_eq!(r.stop().unwrap(), 100);
         let a = i16s(&bytes(&pa)[44..]);
@@ -466,8 +467,8 @@ mod tests {
         let p = tmp("m24.wav");
         let q = Quality { bits: 24, rate: 44_100, channels: 1 };
         let r = Recorder::start_with(vec![(open_rw(&p), Source::Mix)], q, false).unwrap();
-        r.feed(&[20000, 10000], &[0, 0], 1.0, 0.0); // mono: (20000 + 10000) / 2 = 15000
-        r.feed(&[30000, 30000], &[30000, 30000], 0.6, 0.6); // 36000: past 16-bit, within 24-bit's scale
+        r.feed(&[20000, 10000], &[0, 0], [1.0; 2], [0.0; 2]); // mono: (20000 + 10000) / 2 = 15000
+        r.feed(&[30000, 30000], &[30000, 30000], [0.6; 2], [0.6; 2]); // 36000: past 16-bit, within 24-bit's scale
         assert_eq!(r.stop().unwrap(), 2);
         let b = bytes(&p);
         assert_eq!(u32_at(&b, 40), 6);
@@ -482,7 +483,7 @@ mod tests {
         let r = Recorder::start_with(vec![(open_rw(&p), Source::Mix)], Quality::CD, true).unwrap();
         let loud: Vec<i16> = (0..512).map(|i| ((i as f32 * 0.07).sin() * 30000.0) as i16).collect();
         for _ in 0..50 {
-            r.feed(&loud, &loud, 1.0, 1.0); // two near-full sources: twice full scale summed
+            r.feed(&loud, &loud, [1.0; 2], [1.0; 2]); // two near-full sources: twice full scale summed
         }
         r.stop().unwrap();
         let s = i16s(&bytes(&p)[44..]);
@@ -496,7 +497,7 @@ mod tests {
         let p = tmp("f32.wav");
         let q = Quality { bits: 32, rate: 44_100, channels: 2 };
         let r = Recorder::start_with(vec![(open_rw(&p), Source::Mix)], q, true).unwrap();   // (float: never limited)
-        r.feed(&[32767, -16384], &[32767, 0], 1.0, 1.0);
+        r.feed(&[32767, -16384], &[32767, 0], [1.0; 2], [1.0; 2]);
         assert_eq!(r.stop().unwrap(), 1);
         let b = bytes(&p);
         let f = |i: usize| f32::from_le_bytes(b[58 + 4 * i..62 + 4 * i].try_into().unwrap());
@@ -530,7 +531,7 @@ mod tests {
         let r = Recorder::start(vec![(open_rw(&p), Source::Ext)], q).unwrap();
         let blk = vec![5000i16; 512];
         for _ in 0..(44_100 / 256) {
-            r.feed(&blk, &blk, 1.0, 1.0);
+            r.feed(&blk, &blk, [1.0; 2], [1.0; 2]);
         }
         let frames = r.stop().unwrap();
         // 172 blocks of 256 frames at 44.1 kHz -> x 48/44.1
@@ -554,9 +555,9 @@ mod tests {
     fn the_mixer_feeds_the_recording_in_progress() {
         let p = tmp("global.wav");
         *REC.lock().unwrap() = Some(Recorder::start(vec![(open_rw(&p), Source::Mix)], Quality::CD).unwrap());
-        feed(&[1, 2, 3, 4], &[0, 0, 0, 0], 1.0, 1.0);
+        feed(&[1, 2, 3, 4], &[0, 0, 0, 0], [1.0; 2], [1.0; 2]);
         let r = REC.lock().unwrap().take().unwrap();
         assert_eq!(r.stop().unwrap(), 2);
-        feed(&[1, 2], &[0, 0], 1.0, 1.0); // nothing recording: nothing happens
+        feed(&[1, 2], &[0, 0], [1.0; 2], [1.0; 2]); // nothing recording: nothing happens
     }
 }

@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity() {
     private var modeMsg = ""
     private var gEmuPct = 100
     private var gExtPct = 100
+    private var balEmuPct = 0                       // -100 left .. 100 right
+    private var balExtPct = 0
+    private var masterPct = 100
     private var outTarget = AudioIo.OUT_FM1
     private var lowLatency = false
     private var offsetMs = 0                        // > 0: the real FM-1 later; < 0: the emulated one later
@@ -126,6 +129,9 @@ class MainActivity : ComponentActivity() {
         newChip = prefs.getBoolean("newChip", false)
         gEmuPct = prefs.getInt("gEmu", 100)
         gExtPct = prefs.getInt("gExt", 100)
+        balEmuPct = prefs.getInt("balEmu", 0)
+        balExtPct = prefs.getInt("balExt", 0)
+        masterPct = prefs.getInt("master", 100)
         outTarget = prefs.getInt("out", AudioIo.OUT_FM1)
         lowLatency = prefs.getBoolean("lowLatency", false)
         offsetMs = prefs.getInt("offsetMs", 0)
@@ -318,6 +324,7 @@ class MainActivity : ComponentActivity() {
                 running = true
                 Native.setLatency(lowLatency, offsetMs)
                 Native.setLimiter(limiter)
+                applyMix()
                 Native.pot(panel.potValue)
                 applyMidiMode()
                 val micOk = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -698,8 +705,7 @@ class MainActivity : ComponentActivity() {
             nav("Firmware", firmwareLabel(firmware).lowercase().replaceFirstChar { it.uppercase() }) { sh.push("Firmwares") { catalogPage(sh) } }
             group("Son")
             nav("Sortie", outName()) { sh.push("Sortie du son") { outputPage() } }
-            slider("FM-1 émulé", gEmuPct, 0, 150, { "$it %" }) { gEmuPct = it; audio.gEmu = it / 100f; prefs.edit().putInt("gEmu", it).apply() }
-            slider("FM-1 branché (USB)", gExtPct, 0, 150, { "$it %" }) { gExtPct = it; audio.gExt = it / 100f; prefs.edit().putInt("gExt", it).apply() }
+            nav("Mixeur", mixSummary()) { sh.push("Mixeur") { mixerPage() } }
             toggle("Latence basse", "Réserves de 20-25 ms au lieu de 50-60 : moins de retard, un peu plus de risque de craquements", lowLatency) {
                 lowLatency = it; prefs.edit().putBoolean("lowLatency", it).apply(); Native.setLatency(lowLatency, offsetMs)
             }
@@ -727,6 +733,35 @@ class MainActivity : ComponentActivity() {
             nav("Diagnostic audio USB") { sh.push("Diagnostic") { diagnosticPage() } }
             nav("À propos et licences") { sh.push("À propos") { aboutPage() } }
         }
+    }
+
+    private fun balName(v: Int) = when { v < 0 -> "G ${-v}"; v > 0 -> "D $v"; else -> "centre" }
+    private fun mixSummary() = "émulé $gEmuPct % · FM-1 $gExtPct % · master $masterPct %"
+
+    /** a balance near the centre is the centre (a finger can hardly land on 0) */
+    private fun snap(v: Int) = if (kotlin.math.abs(v) < 5) 0 else v
+
+    private fun applyMix() = Native.setMix(balEmuPct / 100f, balExtPct / 100f, masterPct / 100f)
+
+    /** Volume and balance of each source, and the master: what plays, and the recording « Le mix ». */
+    private fun Sheet.Page.mixerPage() {
+        group("FM-1 émulé")
+        slider("Volume", gEmuPct, 0, 150, { "$it %" }) { gEmuPct = it; audio.gEmu = it / 100f; prefs.edit().putInt("gEmu", it).apply() }
+        slider("Balance", balEmuPct, -100, 100, { balName(it) }) { balEmuPct = snap(it); prefs.edit().putInt("balEmu", it).apply(); applyMix() }
+        group("FM-1 branché (USB)")
+        slider("Volume", gExtPct, 0, 150, { "$it %" }) { gExtPct = it; audio.gExt = it / 100f; prefs.edit().putInt("gExt", it).apply() }
+        slider("Balance", balExtPct, -100, 100, { balName(it) }) { balExtPct = snap(it); prefs.edit().putInt("balExt", it).apply(); applyMix() }
+        group("Sortie")
+        slider("Master", masterPct, 0, 150, { "$it %" }) { masterPct = it; prefs.edit().putInt("master", it).apply(); applyMix() }
+        action("Tout remettre à zéro") {
+            gEmuPct = 100; gExtPct = 100; balEmuPct = 0; balExtPct = 0; masterPct = 100
+            audio.gEmu = 1f; audio.gExt = 1f
+            prefs.edit().putInt("gEmu", 100).putInt("gExt", 100).putInt("balEmu", 0).putInt("balExt", 0).putInt("master", 100).apply()
+            applyMix(); sheet?.refresh()
+        }
+        note("Vaut pour ce qui sort et pour l'enregistrement « Le mix » (le limiteur après le master). « Deux pistes » " +
+            "garde les deux sons bruts, pour les retravailler. Balance : vers un côté, l'autre canal baisse ; " +
+            "l'image stéréo de chaque FM-1 est gardée.")
     }
 
     private fun Sheet.Page.outputPage() {
@@ -814,7 +849,7 @@ class MainActivity : ComponentActivity() {
 
     private fun Sheet.Page.aboutPage() {
         group()
-        text("FM1 Mix 0.12, prototype. Un FM-1 émulé sur le téléphone, mixé avec un vrai FM-1 en USB, enregistré, découpé.")
+        text("FM1 Mix 0.13, prototype. Un FM-1 émulé sur le téléphone, mixé avec un vrai FM-1 en USB, enregistré, découpé.")
         group("Licences")
         info("FM1 Mix", "GPL-3.0")
         info("Émulateur fm1-emu", "MIT · Joakim Eriksson")

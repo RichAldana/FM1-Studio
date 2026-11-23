@@ -1,4 +1,4 @@
-# FM1 Mix (prototype, v0.12)
+# FM1 Mix (prototype, v0.13)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -9,6 +9,16 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- audio USB ---> AudioRecord ---+
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
+
+## v0.13 : encodeurs sans sauts, mixeur
+- **Encodeurs** : les crans reçus en MIDI (PANEL MIDI en envoie 2 ou 3 par message) étaient rejoués par l'émulateur en
+  8 ms chacun ; Chordism, qui accélère les tours rapides, comptait alors 36 à 38 crans pour 30. Ils sont maintenant
+  rejoués un par un, 20 ms au moins entre deux (`engine.rs` ENC_PACE_MS ; Chordism les compte juste dès 16 ms) :
+  30 crans = 30, vérifié par `native/tests/enc_bursts.rs`. Les encodeurs de l'écran passent par le même chemin.
+- **Mixeur** (Réglages > Son > Mixeur) : volume et balance de chaque source (FM-1 émulé, FM-1 branché), master.
+  Vaut pour la sortie et l'enregistrement « Le mix » ; « Deux pistes » reste brut (`dsp.rs` `lr`, `Native.setMix`).
+- `native/tests/multi.rs` : plusieurs émulateurs en même temps (mesure de charge), `screen_traffic.rs` : débit d'un
+  écran recopié.
 
 ## v0.12 : les contrôles du FM-1 branché pilotent l'émulé (LOOM-8 PANEL MIDI)
 - Avec un FM-1 sous **LOOM-8 forké avec PANEL MIDI** (`loom8-panelmidi-v2.patch`), l'appli le trouve toute seule
