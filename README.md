@@ -1,4 +1,4 @@
-# FM1 Mix (prototype, v0.13)
+# FM1 Mix (bêta, v0.17)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -10,7 +10,74 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
 
-## v0.13 : encodeurs sans sauts, mixeur
+## v0.17 : moteur d'effets XY (étape 1 du brief : 11 effets)
+- **Le pad n'est plus que dans la zone du milieu** (la plus grande) ; le bas garde le clavier et le mixeur.
+- **Mise en page** : les deux tiers du haut sont le pad ; le tiers du bas a trois rangées : le **type** (Filtre,
+  Delay, Reverb, Modulation, Distorsion, Pitch, Glitch, Dynamique), puis le **nom** de l'effet dans ce type (une
+  deuxième touche sur l'effet choisi le retire), puis le **send** : TOUT, ÉMULÉ ou FM-1, HOLD, le tempo et TAP.
+- **Effets** (`native/fx`) : Filtre Moog, Écho (temps calés sur le tempo : 1/16 à 1/2), Hall, Nuage diffus, Phaser,
+  Flanger, Overdrive, Pitch (demi-tons), Tape stop, Beat repeat (1/4 à 1/64, calé sur la grille), Pompe. Les neuf
+  premiers et la Pompe sont écrits en Faust (`native/fx/faust/*.dsp`, code C++ généré dans `native/fx/generated`,
+  `tools/fx_regen.sh` le refait) ; Tape stop et Beat repeat en C++ (`fxengine.cpp`).
+- **Couche XY** (`native/src/fx.rs`, profils dans `assets/fx_profiles.json`) : chaque axe a sa courbe (linéaire,
+  exponentielle, crans, gamme), son lissage, son inversion ; geste au relâché (retour, maintien, action) ; montée
+  et descente de l'effet (pas de clic) ; HOLD ; les effets « send » (écho, reverbs) laissent sonner leur traîne
+  quand on change d'effet ou qu'on lève le doigt, jusqu'au silence.
+- **Tempo** : l'horloge MIDI du FM-1 (LOOM-8) quand elle arrive, sinon un tempo interne réglé avec TAP.
+- **Sûreté audio** : traitement par blocs de 64 échantillons, valeurs non finies remises à zéro (l'effet est
+  réinitialisé), dénormaux coupés (bit FZ sur ARM64).
+- Tests : `cargo test` (chaque effet seul et au pad, sorties finies, traînes, tap tempo) ; `examples/fx_bench.rs`
+  (chaque effet coûte moins de 2 % du temps réel sur ordinateur).
+- Écarts au brief : le chemin audio existant (Rust, AudioTrack, capture USB) est gardé au lieu d'Oboe ; les effets
+  C++ sont liés au Rust par une petite interface C (`fxengine.h`).
+- Licences : `NOTICE.md`, `native/fx/generated/README.md`, et l'écran « À propos et licences ».
+
+## v0.16 : démarrage à vide, écran en trois parties, enregistreur, mixeur, pad d'effets
+- **Pas de firmware imposé** : au premier lancement, aucun firmware ; le catalogue s'ouvre pour choisir. Ensuite,
+  chaque ouverture reprend le dernier firmware lancé. Le catalogue n'a plus de firmware en tête de liste.
+- **Bouton marche/arrêt** dessiné (le symbole d'alimentation, `PowerButton`), vert allumé, rouge éteint.
+- **Trois parties** (`Zones.kt`) : le bandeau (inchangé), la zone du milieu, la zone du bas. Chacune des deux
+  dernières montre une page à la fois ; un glissé qui part du bord gauche ou droit de la zone change de page (le
+  milieu reste à l'instrument : touches qui glissent, potards), ou une touche sur les points sous la zone. La page
+  choisie est retenue.
+  - milieu : l'écran, les encodeurs et les boutons du FM-1 / l'enregistreur / le pad d'effets ;
+  - bas : le clavier / le mixeur et EQ / le pad d'effets.
+- **Enregistreur** (`RecorderView`) : un chrono, l'onde du mix enregistré qui se dessine pendant l'enregistrement
+  (rouge là où ça sature), un gros bouton ; après une prise, « Découper › » l'ouvre dans le découpeur.
+- **Mixeur** (`MixerView`) : trois tranches (émulé, FM-1, master), un curseur à glissière chacune (0 à 150 %, double
+  tape : 100 %), un vumètre avec un voyant de saturation (rouge 1,5 s), trois potards d'EQ (grave, médium, aigu,
+  ±12 dB, double tape : 0) ; sur le master, le travail du limiteur.
+- **Pad d'effets** (remplacé en 0.17), à la Kaoss Pad : l'effet joue tant que le doigt est posé (HOLD le
+  garde), sa place le règle. Filtre (gauche passe-bas, droite passe-haut, résonance vers le haut), écho (temps de
+  40 à 740 ms, répétitions ; sa traîne continue après le doigt), crush (échantillonnage, bits). Sur tout, sur
+  l'émulé ou sur le FM-1 (avec la sortie sur le FM-1, l'effet sur le FM-1 ne s'entend que dans l'enregistrement).
+  Testés dans `dsp.rs` (fx_tests). Enregistré dans « Le mix ».
+- `tools/layout_check` vérifie aussi les deux zones (tout tient, chaque touche et chaque bouton répond).
+
+## v0.15 : chaque firmware revient tel qu'on l'a laissé
+- **Sa mémoire** : ce que le firmware enregistre lui-même (sons, presets, réglages, projets : sa flash émulée, comme
+  sur un vrai FM-1) a son propre fichier par firmware (`state/<firmware>.fm1s`, seulement les secteurs qu'il a écrits :
+  `native/src/state.rs`). Il est écrit une seconde après chaque enregistrement du firmware (`Native.savedIfChanged`),
+  pas seulement à l'arrêt : un plantage ou une appli tuée ne perd qu'une seconde au plus. Une nouvelle version du
+  même firmware démarre avec, comme un vrai FM-1 garde ses données à une mise à jour (avant, une mise à jour repartait
+  de zéro). Catalogue > le firmware > Mémoire : « Effacer sa mémoire ».
+- **Ses réglages dans l'appli** : horloge, mode MIDI et profil, volume, balance et EQ de l'émulé, MASTER de l'écran,
+  par firmware (`nom@firmware`). Le FM-1 branché, le master et la sortie restent communs.
+- Limite : une modification que le firmware n'a pas encore enregistrée (l'astérisque de Chordism) vit dans la RAM
+  émulée, qui n'est pas gardée, comme sur un vrai FM-1 éteint. Vérifié : un volume de Chordism enregistré revient
+  au redémarrage (`examples/save_check.rs`), `tests/boot.rs` saved_state_comes_back.
+
+## v0.14 : encodeurs corrigés pour de bon, EQ
+- **Encodeurs** : le rythme fixe de 0.13 (20 ms par cran, au-delà de 40 en attente jetés) faisait traîner et perdre
+  les tours rapides. Maintenant chaque cran est joué dès que possible, un à la fois, 9 ms au moins entre deux (le temps
+  qu'un cran met dans l'émulateur : avant, deux crans arrivés ensemble se marchaient dessus) ; aucun n'est jeté.
+  `tests/enc_bursts.rs` : 30 crans = 30, lents, réguliers, groupés par USB, plusieurs par message, et un tour rapide
+  (30 en 150 ms).
+- **EQ** (Réglages > Son > Mixeur et EQ) : trois bandes (grave 150 Hz en plateau, médium 1 kHz en cloche, aigu 6 kHz
+  en plateau, ±12 dB) sur chaque FM-1 et sur le master. Ordre : EQ de la source, volume, balance, master, EQ master,
+  limiteur. Vaut pour la sortie et « Le mix » enregistré (`dsp.rs` Eq3, `Native.setEq`).
+
+## v0.13 : mixeur (et un rythme d'encodeurs remplacé en 0.14)
 - **Encodeurs** : les crans reçus en MIDI (PANEL MIDI en envoie 2 ou 3 par message) étaient rejoués par l'émulateur en
   8 ms chacun ; Chordism, qui accélère les tours rapides, comptait alors 36 à 38 crans pour 30. Ils sont maintenant
   rejoués un par un, 20 ms au moins entre deux (`engine.rs` ENC_PACE_MS ; Chordism les compte juste dès 16 ms) :

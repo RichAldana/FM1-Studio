@@ -52,5 +52,35 @@ fun main(args: Array<String>) {
         val wk = l.keys.first { !it.black }
         println("$tag: scale %.3f, white key %.0f x %.0f px, panel %.0f px high".format(l.scale, wk.w * l.scale, wk.h * l.scale, l.usedHeight * l.scale))
     }
+    // the two zones (Zones.kt): the upper part in the middle one, the keyboard in the bottom one, each under its
+    // 18 dp of page dots (47 px at 2.625)
+    for (sz in sizes) {
+        val w = sz[0]; val h = sz[1]
+        val dots = 47f
+        val midH = minOf(w * (L.TOP_H / L.REF_W + 0.02f), h * 0.62f)
+        val t = L.buildTop(w, midH - dots)
+        val k = L.buildKeys(w, h - midH - dots)
+        val tag = "zones ${w.toInt()}x${h.toInt()}"
+        check(t.oy >= -0.01f && t.oy + L.TOP_H * t.scale <= midH - dots + 0.01f, "$tag: the upper part fits its zone")
+        check(t.ox >= -0.01f && t.ox + L.REF_W * t.scale <= w + 0.01f, "$tag: the upper part fits the width")
+        val kTop = k.oy + L.TOP_H * k.scale
+        val kBot = k.oy + k.usedHeight * k.scale
+        check(kTop >= -0.5f && kBot <= h - midH - dots + 0.5f, "$tag: the keyboard fits its zone (%.0f..%.0f of %.0f)".format(kTop, kBot, h - midH - dots))
+        for (i in k.keys.indices) {
+            val key = k.keys[i]
+            // a touch in the middle of the key, in the zone's pixels, lands on it
+            val px = k.ox + (key.x + key.w / 2f) * k.scale
+            val py = k.oy + (key.y + key.h * 0.8f) * k.scale
+            val hit = k.hit(k.toRefX(px), k.toRefY(py))
+            check(hit != null && hit.kind == L.HIT_KEY && hit.index == i, "$tag: key ${key.id}")
+        }
+        for (i in t.buttons.indices) {
+            val b = t.buttons[i]
+            val hit = t.hit(t.toRefX(t.ox + (b.x + b.w / 2f) * t.scale), t.toRefY(t.oy + (b.y + b.h / 2f) * t.scale))
+            check(hit != null && hit.kind == L.HIT_BTN && hit.index == i, "$tag: button ${b.name}")
+        }
+        val wk = k.keys.first { !it.black }
+        println("$tag: middle %.0f px (scale %.3f), keys zone %.0f px, white key %.0f x %.0f px".format(midH, t.scale, h - midH, wk.w * k.scale, wk.h * k.scale))
+    }
     println(if (failures == 0) "ALL OK" else "$failures FAILURES")
 }
