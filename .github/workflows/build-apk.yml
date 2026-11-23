@@ -1,0 +1,39 @@
+# Builds a debug APK you can install on a phone (Settings: allow installing from this source).
+# GitHub: Actions tab > "Build APK" > Run workflow, then download "fm1mix-debug-apk" from the run.
+name: Build APK
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fm1-emu (the emulator core, MIT)
+        run: |
+          [ -d third_party/fm1-emu/crates ] || git clone --depth 1 https://github.com/joakimeriksson/fm1-emu third_party/fm1-emu
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      # the runner already carries the Android SDK (ANDROID_HOME): only add what we need
+      - name: Android platform and NDK
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKM="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          echo "using $SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" "ndk;26.3.11579264"
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-linux-android }
+      - run: cargo install cargo-ndk --locked
+      - name: libfm1mix.so (arm64)
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk/26.3.11579264"
+          bash build-native.sh
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - run: gradle :app:assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fm1mix-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
