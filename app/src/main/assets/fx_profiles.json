@@ -1,0 +1,56 @@
+[
+  {"id": "faust.moog", "label": "Filtre Moog", "category": "Filtre", "mode": "insert",
+   "attackMs": 20, "releaseMs": 150, "gesture": "return",
+   "x": {"param": "cutoff", "curve": "exp", "min": 40, "max": 18000, "smoothMs": 15, "rest": 18000},
+   "y": {"param": "res", "curve": "lin", "min": 0.0, "max": 0.9, "smoothMs": 20, "rest": 0.0}},
+
+  {"id": "faust.echo", "label": "Écho", "category": "Delay", "mode": "send", "tail": true, "latch": true,
+   "attackMs": 30, "releaseMs": 150, "gesture": "hold",
+   "x": {"param": "time", "curve": "steps", "steps": ["1/16", "1/8", "1/8.", "1/4", "1/2"], "tempoSync": true},
+   "y": {"param": "feedback", "curve": "lin", "min": 0.0, "max": 0.95, "smoothMs": 20}},
+
+  {"id": "faust.zita", "label": "Hall", "category": "Reverb", "mode": "send", "tail": true,
+   "attackMs": 30, "releaseMs": 200, "gesture": "hold",
+   "x": {"param": "t60", "curve": "exp", "min": 0.5, "max": 20, "smoothMs": 30},
+   "y": {"param": "mix", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+
+  {"id": "faust.greyhole", "label": "Nuage diffus", "category": "Reverb", "mode": "send", "tail": true,
+   "attackMs": 30, "releaseMs": 200, "gesture": "hold",
+   "x": {"param": "size", "curve": "lin", "min": 0.5, "max": 3.0, "smoothMs": 30},
+   "y": {"param": "diffusion", "curve": "lin", "min": 0.0, "max": 0.99, "smoothMs": 30}},
+
+  {"id": "faust.phaser", "label": "Phaser", "category": "Modulation", "mode": "insert",
+   "attackMs": 30, "releaseMs": 200, "gesture": "return",
+   "x": {"param": "speed", "curve": "exp", "min": 0.05, "max": 8, "smoothMs": 30},
+   "y": {"param": "depth", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+
+  {"id": "faust.flanger", "label": "Flanger", "category": "Modulation", "mode": "insert",
+   "attackMs": 30, "releaseMs": 200, "gesture": "return",
+   "x": {"param": "speed", "curve": "exp", "min": 0.05, "max": 5, "smoothMs": 30},
+   "y": {"param": "feedback", "curve": "lin", "min": 0.0, "max": 0.95, "smoothMs": 20}},
+
+  {"id": "faust.drive", "label": "Overdrive", "category": "Distorsion", "mode": "insert",
+   "attackMs": 15, "releaseMs": 120, "gesture": "return",
+   "x": {"param": "drive", "curve": "lin", "min": 0.05, "max": 1.0, "smoothMs": 20},
+   "y": {"param": "tone", "curve": "exp", "min": 500, "max": 12000, "smoothMs": 20}},
+
+  {"id": "faust.pitch", "label": "Pitch", "category": "Pitch", "mode": "insert",
+   "attackMs": 20, "releaseMs": 120, "gesture": "return",
+   "x": {"param": "shift", "curve": "scale", "min": -12, "max": 12, "scale": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
+   "y": {"param": "mix", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+
+  {"id": "cpp.tapestop", "label": "Tape stop", "category": "Pitch", "mode": "insert",
+   "attackMs": 5, "releaseMs": 400, "gesture": "action",
+   "x": {"param": "fall", "curve": "exp", "min": 0.05, "max": 2.0, "smoothMs": 10},
+   "y": {"param": "mix", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+
+  {"id": "cpp.beatrepeat", "label": "Beat repeat", "category": "Glitch", "mode": "insert",
+   "attackMs": 3, "releaseMs": 30, "gesture": "action",
+   "x": {"param": "length", "curve": "steps", "steps": ["1/4", "1/8", "1/16", "1/32", "1/64"], "tempoSync": true, "unit": "beats"},
+   "y": {"param": "decay", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+
+  {"id": "faust.pump", "label": "Pompe", "category": "Dynamique", "mode": "insert",
+   "attackMs": 30, "releaseMs": 200, "gesture": "return",
+   "x": {"param": "thresh", "curve": "lin", "min": -40, "max": 0, "smoothMs": 20},
+   "y": {"param": "ratio", "curve": "exp", "min": 1, "max": 20, "smoothMs": 20}}
+]

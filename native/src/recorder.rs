@@ -216,12 +216,12 @@ impl Track {
         })
     }
 
-    fn push(&mut self, emu: &[i16], ext: &[i16], g_emu: [f32; 2], g_ext: [f32; 2]) -> std::io::Result<()> {
+    fn push(&mut self, emu: &[i16], ext: &[i16], mix: &[f32]) -> std::io::Result<()> {
         let n = emu.len().min(ext.len()) & !1;
         self.tmp.clear();
         for i in 0..n {
             let v = match self.src {
-                Source::Mix => emu[i] as f32 * g_emu[i & 1] + ext[i] as f32 * g_ext[i & 1],
+                Source::Mix => mix[i],
                 Source::Emu => emu[i] as f32,
                 Source::Ext => ext[i] as f32,
             };
@@ -248,8 +248,8 @@ impl Track {
 struct Block {
     emu: Vec<i16>,
     ext: Vec<i16>,
-    g_emu: [f32; 2],
-    g_ext: [f32; 2],
+    /// the mix as it is recorded (the mixer's: volumes, balances, EQs), not yet limited
+    mix: Vec<f32>,
 }
 
 #[derive(Default)]
@@ -293,7 +293,7 @@ impl Recorder {
                         continue; // drain, then report
                     }
                     for t in tracks.iter_mut() {
-                        if let Err(e) = t.push(&b.emu, &b.ext, b.g_emu, b.g_ext) {
+                        if let Err(e) = t.push(&b.emu, &b.ext, &b.mix) {
                             err = Some(format!("write: {e}"));
                             break;
                         }
@@ -317,9 +317,17 @@ impl Recorder {
 
     /// One block from the mixer (`emu` and `ext` stereo interleaved, same length), never waiting.
     pub fn feed(&self, emu: &[i16], ext: &[i16], g_emu: [f32; 2], g_ext: [f32; 2]) {
-        let Some(tx) = self.tx.as_ref() else { return };
         let n = emu.len().min(ext.len()) & !1;
-        let b = Block { emu: emu[..n].to_vec(), ext: ext[..n].to_vec(), g_emu, g_ext };
+        let mix: Vec<f32> = (0..n).map(|i| emu[i] as f32 * g_emu[i & 1] + ext[i] as f32 * g_ext[i & 1]).collect();
+        self.feed_mix(emu, ext, mix)
+    }
+
+    /// The two sources as they came, and the mix the mixer made of them.
+    pub fn feed_mix(&self, emu: &[i16], ext: &[i16], mut mix: Vec<f32>) {
+        let Some(tx) = self.tx.as_ref() else { return };
+        let n = emu.len().min(ext.len()).min(mix.len()) & !1;
+        mix.truncate(n);
+        let b = Block { emu: emu[..n].to_vec(), ext: ext[..n].to_vec(), mix };
         match tx.try_send(b) {
             Ok(()) => {
                 self.stats.frames.fetch_add((n / 2) as u64, Ordering::Relaxed);
@@ -349,6 +357,15 @@ pub fn feed(emu: &[i16], ext: &[i16], g_emu: [f32; 2], g_ext: [f32; 2]) {
     if let Ok(g) = REC.try_lock() {
         if let Some(r) = g.as_ref() {
             r.feed(emu, ext, g_emu, g_ext);
+        }
+    }
+}
+
+/// As [feed], with the mix made already (the mixer's).
+pub fn feed_mix(emu: &[i16], ext: &[i16], mix: Vec<f32>) {
+    if let Ok(g) = REC.try_lock() {
+        if let Some(r) = g.as_ref() {
+            r.feed_mix(emu, ext, mix);
         }
     }
 }

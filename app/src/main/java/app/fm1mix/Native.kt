@@ -29,15 +29,35 @@ object Native {
 
     external fun lcd(out: ShortArray)        // 240*240 RGB565
     external fun leds(out: FloatArray)       // 41
-    external fun meters(out: FloatArray)     // [emulator peak, external peak]
+    external fun meters(out: FloatArray)     // [emulated, real] (0..1), or with 4: [.., what plays, what is recorded] (above 1: it would clip)
     external fun status(): String
     /** Share of the time spent emulating, in percent; -1 stopped, -2 halted on an error (see status()). */
     external fun load(): Int
     /** [low]: small queues; [offsetMs] > 0 delays the real FM-1, < 0 the emulated one */
     external fun setLatency(low: Boolean, offsetMs: Int)
     external fun setLimiter(on: Boolean)
+    /** What the firmware saved (its flash sectors), when it changed since the last call, else null. */
+    external fun savedIfChanged(): ByteArray?
     /** The mixer: each source's balance (-1 left .. 1 right) and the master volume (1: as is). */
     external fun setMix(balEmu: Float, balExt: Float, master: Float)
+    /** An EQ's bands in dB (-12 .. 12): [source] 0 the emulated FM-1, 1 the real one, 2 the master. */
+    external fun setEq(source: Int, low: Float, mid: Float, high: Float)
+    /** The pad's effects (native/src/fx.rs): the profiles (assets/fx_profiles.json) loaded and every effect made; "" or the error. */
+    external fun fxLoad(profilesJson: String): String
+    /** the effects there are, in order: "id\tlabel\ttype" a line each */
+    external fun fxList(): String
+    /** the effect playing: its index in fxList, -1 none */
+    external fun fxSelect(index: Int)
+    /** the finger on the pad: x, y 0..1 (y = 0 at the bottom) */
+    external fun fxTouch(x: Float, y: Float, down: Boolean)
+    /** what it is on: 0 everything, 1 the emulated FM-1, 2 the real one */
+    external fun fxTarget(target: Int)
+    external fun fxHold(on: Boolean)
+    external fun fxSetBpm(bpm: Float)
+    /** a tap of TAP: the internal tempo from the taps */
+    external fun fxTap(): Float
+    /** [tempo, beat, 1 when it is the MIDI clock's] */
+    external fun fxInfo(out: FloatArray)
     /** out = [the captured FM-1's queue (ms), its clock against the phone's (ppm), the limiter's reduction (dB)] */
     external fun audioInfo(out: FloatArray)
 

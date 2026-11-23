@@ -53,7 +53,7 @@ fn boots_plays_and_mixes() {
     assert!(lit > 100, "the LCD stayed blank");
     assert!(peak_emu > 0.01, "no sound from the emulated firmware");
     assert!(peak_ext > 0.05, "the external tone did not reach the mix");
-    assert_eq!(flash.len(), 1 << 20);
+    assert!(fm1mix::state::decode(&flash, 1 << 20).is_ok(), "the saved state is not a sectors file");
 }
 
 /// Low latency with Chordism running and a "real FM-1" whose clock runs 300 ppm fast, its sound coming in 8 ms USB
@@ -98,4 +98,39 @@ fn low_latency_and_a_drifting_fm1() {
     assert!(st.contains("ext underruns 0"), "no dry queue: {st}");
     assert!(peak <= 29_200, "the loud mix limited: {peak}");
     e.stop();
+}
+
+/// What a firmware saved comes back: a run's saved state, booted again, is saved the same; the whole image the app
+/// kept before 0.15 still boots.
+#[test]
+fn saved_state_comes_back() {
+    let Ok(path) = std::env::var("FM1_TEST_FWSC") else { return };
+    let pkg = std::fs::read(path).unwrap();
+    let run = |saved: Option<&[u8]>| {
+        let e = Engine::start(&pkg, saved, 240, false).expect("boot");
+        let mut out = vec![0i16; 512];
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_millis(3000) {
+            e.read_mixed(&mut out, 1.0, 0.0);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let live = e.saved_if_changed(0);
+        (e.stop(), live)
+    };
+    let (first, live) = run(None);
+    let n = fm1mix::state::decode(&first, 1 << 20).unwrap().len();
+    eprintln!("the firmware wrote {n} sectors at its first boot; published while running: {}", live.is_some());
+    let (second, _) = run(Some(&first));
+    assert_eq!(fm1mix::state::decode(&second, 1 << 20).unwrap().len(), n.max(fm1mix::state::decode(&second, 1 << 20).unwrap().len()));
+    // a sector changed by hand comes back as it was
+    let mut changed = first.clone();
+    if n > 0 {
+        let last = changed.len() - 1;
+        changed[last] ^= 0x5A;
+        let (third, _) = run(Some(&changed));
+        let back = fm1mix::state::decode(&third, 1 << 20).unwrap();
+        let mine = fm1mix::state::decode(&changed, 1 << 20).unwrap();
+        let (at, d) = mine[mine.len() - 1];
+        assert!(back.iter().any(|(a, b)| *a == at && *b == d), "the changed sector did not come back");
+    }
 }

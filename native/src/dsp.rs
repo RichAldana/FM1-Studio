@@ -25,6 +25,111 @@ pub fn get_f(a: &AtomicU32) -> f32 {
     f32::from_bits(a.load(Ordering::Relaxed))
 }
 
+/// The EQs' gains in dB (-12 .. 12, f32 bits): source k (EQ_EMU, EQ_EXT, EQ_MASTER), band b (0 low, 1 mid, 2 high)
+/// at EQ_DB[3 * k + b]. All 0: the EQ is off (not computed, nothing changed).
+pub const EQ_EMU: usize = 0;
+pub const EQ_EXT: usize = 1;
+pub const EQ_MASTER: usize = 2;
+pub static EQ_DB: [AtomicU32; 9] = [const { AtomicU32::new(0) }; 9];
+/// the bands: a low shelf, a bell, a high shelf (Hz), and the bell's Q
+pub const EQ_FREQ: [f32; 3] = [150.0, 1000.0, 6000.0];
+const EQ_Q: f32 = 0.7;
+const FS: f32 = 44100.0;
+
+pub fn eq_db(source: usize) -> [f32; 3] {
+    [get_f(&EQ_DB[3 * source]), get_f(&EQ_DB[3 * source + 1]), get_f(&EQ_DB[3 * source + 2])]
+}
+
+/// One biquad (RBJ's cookbook), stereo, transposed direct form II.
+#[derive(Clone, Copy, Default)]
+struct Biquad {
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z: [[f32; 2]; 2],
+}
+
+impl Biquad {
+    /// kind 0 low shelf, 1 bell, 2 high shelf; the state is kept (a gain moved while it plays: no click)
+    fn set(&mut self, kind: usize, f0: f32, db: f32) {
+        let a = 10f32.powf(db / 40.0);
+        let w = 2.0 * std::f32::consts::PI * f0 / FS;
+        let (sn, cs) = w.sin_cos();
+        let (b0, b1, b2, a0, a1, a2);
+        if kind == 1 {
+            let al = sn / (2.0 * EQ_Q);
+            b0 = 1.0 + al * a;
+            b1 = -2.0 * cs;
+            b2 = 1.0 - al * a;
+            a0 = 1.0 + al / a;
+            a1 = -2.0 * cs;
+            a2 = 1.0 - al / a;
+        } else {
+            let al = sn / 2.0 * std::f32::consts::SQRT_2; // shelf slope 1
+            let k = 2.0 * a.sqrt() * al;
+            let s = if kind == 0 { 1.0 } else { -1.0 };
+            b0 = a * ((a + 1.0) - s * (a - 1.0) * cs + k);
+            b1 = s * 2.0 * a * ((a - 1.0) - s * (a + 1.0) * cs);
+            b2 = a * ((a + 1.0) - s * (a - 1.0) * cs - k);
+            a0 = (a + 1.0) + s * (a - 1.0) * cs + k;
+            a1 = -s * 2.0 * ((a - 1.0) + s * (a + 1.0) * cs);
+            a2 = (a + 1.0) + s * (a - 1.0) * cs - k;
+        }
+        self.b0 = b0 / a0;
+        self.b1 = b1 / a0;
+        self.b2 = b2 / a0;
+        self.a1 = a1 / a0;
+        self.a2 = a2 / a0;
+    }
+
+    #[inline]
+    fn run(&mut self, x: f32, c: usize) -> f32 {
+        let y = self.b0 * x + self.z[c][0];
+        self.z[c][0] = self.b1 * x - self.a1 * y + self.z[c][1];
+        self.z[c][1] = self.b2 * x - self.a2 * y;
+        y
+    }
+}
+
+/// Three bands on a stereo signal (interleaved): low shelf, bell, high shelf.
+#[derive(Clone, Copy, Default)]
+pub struct Eq3 {
+    b: [Biquad; 3],
+    db: [f32; 3],
+    on: bool,
+}
+
+impl Eq3 {
+    pub fn set(&mut self, db: [f32; 3]) {
+        if db == self.db {
+            return;
+        }
+        let was = self.on;
+        self.db = db;
+        self.on = db.iter().any(|g| g.abs() > 0.01);
+        for k in 0..3 {
+            self.b[k].set(k, EQ_FREQ[k], db[k].clamp(-12.0, 12.0));
+            if !was {
+                self.b[k].z = [[0.0; 2]; 2];
+            }
+        }
+    }
+
+    pub fn process(&mut self, x: &mut [f32]) {
+        if !self.on {
+            return;
+        }
+        for (i, v) in x.iter_mut().enumerate() {
+            let c = i & 1;
+            let y = self.b[0].run(*v, c);
+            let y = self.b[1].run(y, c);
+            *v = self.b[2].run(y, c);
+        }
+    }
+}
+
 /// A stereo source's gains, left and right: its volume [g], its balance [bal] (centre: both at g; to one side, the
 /// other channel down, to silence at the end: a balance, not a pan, so a stereo source keeps its own picture) and
 /// [master].
@@ -223,6 +328,35 @@ impl Limiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// the gain (dB) a stereo sine at [f] Hz comes out with
+    fn gain_at(eq: &mut Eq3, f: f32) -> f32 {
+        let n = 44100;
+        let mut x: Vec<f32> = (0..2 * n).map(|i| (2.0 * std::f32::consts::PI * f * (i / 2) as f32 / 44100.0).sin()).collect();
+        eq.process(&mut x);
+        let tail = &x[n..];   // past the start
+        let peak = tail.iter().fold(0f32, |m, v| m.max(v.abs()));
+        20.0 * peak.log10()
+    }
+
+    #[test]
+    fn eq_bands_lift_their_own_range() {
+        let mut eq = Eq3::default();
+        eq.set([0.0, 0.0, 0.0]);
+        assert!(gain_at(&mut eq, 1000.0).abs() < 0.01, "flat: as is");
+        let mut eq = Eq3::default();
+        eq.set([12.0, 0.0, 0.0]);
+        let (lo, hi) = (gain_at(&mut eq, 40.0), gain_at(&mut eq, 8000.0));
+        assert!((lo - 12.0).abs() < 0.5 && hi.abs() < 0.3, "low shelf: {lo} dB at 40 Hz, {hi} at 8 kHz");
+        let mut eq = Eq3::default();
+        eq.set([0.0, -12.0, 0.0]);
+        let (mid, lo) = (gain_at(&mut eq, 1000.0), gain_at(&mut eq, 50.0));
+        assert!((mid + 12.0).abs() < 0.3 && lo.abs() < 0.5, "bell: {mid} dB at 1 kHz, {lo} at 50 Hz");
+        let mut eq = Eq3::default();
+        eq.set([0.0, 0.0, 6.0]);
+        let (hi, lo) = (gain_at(&mut eq, 16000.0), gain_at(&mut eq, 100.0));
+        assert!((hi - 6.0).abs() < 0.5 && lo.abs() < 0.2, "high shelf: {hi} dB at 16 kHz, {lo} at 100 Hz");
+    }
 
     #[test]
     fn balance_keeps_the_centre_and_fades_one_side() {

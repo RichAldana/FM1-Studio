@@ -2,7 +2,7 @@
 name = "fm1mix"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-only"   # (FM1 Mix as a whole: NOTICE.md)
 description = "fm1-emu host for Android: emulated FM-1 + external USB audio mixed into one output"
 
 [lib]
@@ -14,6 +14,12 @@ fm1-soc = { path = "../third_party/fm1-emu/crates/fm1-soc" }
 fm1-map = { path = "../third_party/fm1-emu/crates/fm1-map" }
 jni = "0.21"
 libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# the pad's effects (native/fx: C++, Faust's generated code among it)
+[build-dependencies]
+cc = "1"
 
 [profile.release]
 opt-level = 3

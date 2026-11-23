@@ -1,7 +1,7 @@
 //! JNI surface: Kotlin class `app.fm1mix.Native`.
 
 use crate::engine::Engine;
-use jni::objects::{JByteArray, JClass, JFloatArray, JShortArray};
+use jni::objects::{JByteArray, JClass, JFloatArray, JShortArray, JString};
 use jni::sys::{jboolean, jbyteArray, jfloat, jint, jstring};
 use jni::JNIEnv;
 use std::sync::Mutex;
@@ -31,6 +31,7 @@ pub extern "system" fn Java_app_fm1mix_Native_start(
     if let Some(old) = g.take() {
         old.stop();
     }
+    SAVED_SEEN.store(0, std::sync::atomic::Ordering::Relaxed);
     let r = std::panic::catch_unwind(|| Engine::start(&pkg, flash.as_deref(), mhz.max(1) as u64, new_chip != 0))
         .unwrap_or_else(|_| Err("the emulator panicked while booting".into()));
     match r {
@@ -54,6 +55,23 @@ pub extern "system" fn Java_app_fm1mix_Native_stop(env: JNIEnv, _c: JClass) -> j
         Some(e) => {
             let flash = e.stop();
             env.byte_array_from_slice(&flash).map(|a| a.into_raw()).unwrap_or(std::ptr::null_mut())
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// the generation of the saved state the app has (savedIfChanged), back to 0 with each machine
+static SAVED_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What the firmware saved, when it changed since the last call (state.rs), else null: the app writes it to the
+/// firmware's own file, so a crash or a killed app loses a second of it at most.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_savedIfChanged(env: JNIEnv, _c: JClass) -> jbyteArray {
+    let since = SAVED_SEEN.load(std::sync::atomic::Ordering::Relaxed);
+    match with(|e| e.saved_if_changed(since)).flatten() {
+        Some((gen, data)) => {
+            SAVED_SEEN.store(gen, std::sync::atomic::Ordering::Relaxed);
+            env.byte_array_from_slice(&data).map(|a| a.into_raw()).unwrap_or(std::ptr::null_mut())
         }
         None => std::ptr::null_mut(),
     }
@@ -132,7 +150,13 @@ pub extern "system" fn Java_app_fm1mix_Native_leds(env: JNIEnv, _c: JClass, out:
 
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_meters(env: JNIEnv, _c: JClass, out: JFloatArray) {
-    if let Some((a, b)) = with(|e| e.take_meters()) {
+    // [emulated, real, what plays, what is recorded]: 2 values (0..1) or 4 (above 1: it would clip)
+    let n = env.get_array_length(&out).unwrap_or(2).clamp(0, 4) as usize;
+    if n >= 4 {
+        if let Some(m) = with(|e| e.take_meters4()) {
+            let _ = env.set_float_array_region(&out, 0, &m);
+        }
+    } else if let Some((a, b)) = with(|e| e.take_meters()) {
         let _ = env.set_float_array_region(&out, 0, &[a, b]);
     }
 }
@@ -303,6 +327,73 @@ pub extern "system" fn Java_app_fm1mix_Native_setLatency(_e: JNIEnv, _c: JClass,
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_setLimiter(_e: JNIEnv, _c: JClass, on: jboolean) {
     crate::dsp::LIMIT.store(on != 0, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// An EQ's three bands in dB (-12 .. 12): source 0 the emulated FM-1, 1 the real one, 2 the master.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_setEq(_e: JNIEnv, _c: JClass, source: jint, low: jfloat, mid: jfloat, high: jfloat) {
+    use crate::dsp::{set_f, EQ_DB};
+    if (0..3).contains(&source) {
+        let k = 3 * source as usize;
+        set_f(&EQ_DB[k], low.clamp(-12.0, 12.0));
+        set_f(&EQ_DB[k + 1], mid.clamp(-12.0, 12.0));
+        set_f(&EQ_DB[k + 2], high.clamp(-12.0, 12.0));
+    }
+}
+
+// ------------------------------------------------------------------ the pad's effects (fx.rs)
+
+/// Load the effects' profiles (JSON) and make every effect this build has; "" or the error.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxLoad(mut env: JNIEnv, _c: JClass, json: JString) -> jstring {
+    let json: String = match env.get_string(&json) { Ok(s) => s.into(), Err(e) => return jstr(&mut env, &e.to_string()) };
+    let r = std::panic::catch_unwind(|| crate::fx::FxEngine::load(&json)).unwrap_or_else(|_| Err("effects: panic".into()));
+    match r {
+        Ok(e) => { *crate::fx::ENGINE.lock().unwrap() = Some(e); jstr(&mut env, "") }
+        Err(e) => jstr(&mut env, &e),
+    }
+}
+
+/// The effects there are, in order: "id\tlabel\tcategory" a line each.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxList(mut env: JNIEnv, _c: JClass) -> jstring {
+    let g = crate::fx::ENGINE.lock().unwrap();
+    let s = g.as_ref().map(|e| e.list().iter().map(|p| format!("{}\t{}\t{}", p.id, p.label, p.category)).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+    drop(g);
+    jstr(&mut env, &s)
+}
+
+/// The effect playing: its index in fxList, or -1 for none.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxSelect(_e: JNIEnv, _c: JClass, index: jint) { crate::fx::select(index); }
+
+/// The finger on the pad: x, y in 0..1 (y = 0 at the bottom), down or lifted.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxTouch(_e: JNIEnv, _c: JClass, x: jfloat, y: jfloat, down: jboolean) {
+    crate::fx::touch(x, y, down != 0);
+}
+
+/// What the effect is on: 0 everything, 1 the emulated FM-1, 2 the real one.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxTarget(_e: JNIEnv, _c: JClass, t: jint) {
+    crate::fx::TARGET.store(t.clamp(0, 2) as u32, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// HOLD: the effect stays on when the finger lifts.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxHold(_e: JNIEnv, _c: JClass, on: jboolean) { crate::fx::hold(on != 0); }
+
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxSetBpm(_e: JNIEnv, _c: JClass, bpm: jfloat) { crate::fx::set_bpm(bpm); }
+
+/// A tap of TAP: the internal tempo from the taps; returns it.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxTap(_e: JNIEnv, _c: JClass) -> jfloat { crate::fx::tap() }
+
+/// [tempo, beat, 1 when it is the MIDI clock's]
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxInfo(env: JNIEnv, _c: JClass, out: jni::objects::JFloatArray) {
+    let _ = env.set_float_array_region(&out, 0, &crate::fx::info());
 }
 
 /// The mixer's balances (-1 .. 1) and master volume (1: as is); the volumes come with readMixed.

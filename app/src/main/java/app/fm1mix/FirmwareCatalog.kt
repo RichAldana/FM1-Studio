@@ -139,7 +139,7 @@ object FirmwareCatalog {
         val ids = out.map { it.id }.toHashSet()
         val names = out.map { it.name.lowercase().filter { c -> c.isLetterOrDigit() } }.toHashSet()
         for (x in EXTRAS) if (x.id !in ids && x.name.lowercase().filter { it.isLetterOrDigit() } !in names) out.add(x)
-        out.sortWith(compareBy<Entry>({ it.id != DEFAULT_ID }, { it.byo }, { it.name.lowercase() }))
+        out.sortWith(compareBy<Entry>({ it.byo }, { it.name.lowercase() }))   // (no firmware first: the user picks)
         return Catalog(out, DEFAULT_ID, fm1emu.updated)
     }
 

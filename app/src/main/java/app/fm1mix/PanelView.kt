@@ -15,13 +15,23 @@ import app.fm1mix.PanelLayout as L
  * the touch is the velocity; a finger sliding across keys plays them in turn; several fingers at once).
  * The layout is PanelLayout, rebuilt for whatever size the view gets.
  */
-class PanelView(ctx: Context) : View(ctx) {
+class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
+    companion object {
+        /** the whole panel; the screen, encoders and buttons; the keyboard (each part in its own swipe zone) */
+        const val PART_ALL = 0
+        const val PART_TOP = 1
+        const val PART_KEYS = 2
+    }
+
     private val bmp = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565)
     private val leds = FloatArray(41)
     private val down = BooleanArray(41)          // by matrix id: held by a finger
     private val encTurn = FloatArray(7)          // by index in layout.encs: where the knob points, in degrees
-    var potValue = 1023                          // MASTER, 0..1023
-        private set
+    /** MASTER, 0..1023 (set by the activity: each firmware's own) */
+    var potValue = 1023
+        set(v) { field = v.coerceIn(0, 1023); invalidate() }
+    /** MASTER turned on the screen (kept per firmware by the activity) */
+    var onPot: ((Int) -> Unit)? = null
     /** Shown dimmed, untouchable, when the machine is off. */
     var powered = false
         set(v) { field = v; invalidate() }
@@ -67,7 +77,11 @@ class PanelView(ctx: Context) : View(ctx) {
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        layout = L.build(w.toFloat(), h.toFloat())
+        layout = when (part) {
+            PART_TOP -> L.buildTop(w.toFloat(), h.toFloat())
+            PART_KEYS -> L.buildKeys(w.toFloat(), h.toFloat())
+            else -> L.build(w.toFloat(), h.toFloat())
+        }
     }
 
     // ------------------------------------------------------------------ drawing
@@ -102,6 +116,17 @@ class PanelView(ctx: Context) : View(ctx) {
         c.translate(l.ox, l.oy)
         c.scale(l.scale, l.scale)
 
+        if (part != PART_KEYS) drawUpper(c, l)
+        if (part != PART_TOP) drawKeys(c, l)
+        if (!powered) {
+            fill.shader = null
+            fill.color = 0x66000000
+            c.drawRect(-2000f, -4000f, L.REF_W + 2000f, 6000f, fill)
+        }
+        c.restore()
+    }
+
+    private fun drawUpper(c: Canvas, l: L.Layout) {
         // the screen in its bezel
         round(c, l.bezelX, l.bezelY, l.bezelSize, l.bezelSize, 34f, 0xFF111214.toInt())
         if (powered) {
@@ -135,7 +160,9 @@ class PanelView(ctx: Context) : View(ctx) {
                 if (led > 0.5f) tint else ink)
         }
 
-        // keyboard
+    }
+
+    private fun drawKeys(c: Canvas, l: L.Layout) {
         round(c, l.kbX, l.kbY, l.kbW, l.kbH, 36f, 0xFF1A1B1D.toInt())
         for (pass in 0..1) for (k in l.keys) {
             if ((pass == 0) == k.black) continue
@@ -161,13 +188,6 @@ class PanelView(ctx: Context) : View(ctx) {
             }
             if (k.name.isNotEmpty()) label(c, k.name, k.x + k.w / 2f, k.y + k.h - 46f, 28f, 0xFF9A8F80.toInt())
         }
-
-        if (!powered) {
-            fill.shader = null
-            fill.color = 0x66000000
-            c.drawRect(0f, 0f, L.REF_W, l.usedHeight, fill)
-        }
-        c.restore()
     }
 
     private fun drawKnob(c: Canvas, e: L.Enc, degrees: Float, isPot: Boolean) {
@@ -231,6 +251,7 @@ class PanelView(ctx: Context) : View(ctx) {
     private fun press(id: Int, x: Float, y: Float) {
         val l = layout
         val h = l.hit(x, y) ?: return
+        if (part == PART_TOP && h.kind == L.HIT_KEY || part == PART_KEYS && h.kind != L.HIT_KEY) return
         touches.put(id, Touch(h.kind, h.index, x, y))
         when (h.kind) {
             L.HIT_BTN -> {
@@ -271,6 +292,7 @@ class PanelView(ctx: Context) : View(ctx) {
                 if (v != potValue) {
                     potValue = v
                     Native.pot(v)
+                    onPot?.invoke(v)
                     invalidate()
                 }
             }

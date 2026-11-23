@@ -44,6 +44,10 @@ object PanelLayout {
         /** how far down the panel goes, in reference units */
         val usedHeight: Float
     ) {
+        /** the same panel at another scale and place (one part of it shown in a view of its own) */
+        fun moved(s: Float, x: Float, y: Float) = Layout(s, x, y, encs, pot, buttons, keys, bezelX, bezelY, bezelSize,
+            lcdX, lcdY, lcdSize, kbX, kbY, kbW, kbH, usedHeight)
+
         fun toRefX(px: Float): Float = (px - ox) / scale
         fun toRefY(py: Float): Float = (py - oy) / scale
 
@@ -106,6 +110,19 @@ object PanelLayout {
             val cx = x0 + (blackAfter[j] + 1) * w
             out.add(Key(14 + blacks[j], cx - bw / 2f, y, bw, rowH * 0.6f, true, ""))
         }
+    }
+
+    /** The upper part alone (screen, encoders, buttons: reference 0 .. TOP_H) fitted to [w] x [h]. */
+    fun buildTop(w: Float, h: Float): Layout {
+        val s = minOf(w / REF_W, h / TOP_H)
+        return build(REF_W, 3000f).moved(s, (w - REF_W * s) / 2f, (h - TOP_H * s) / 2f)
+    }
+
+    /** The keyboard alone fitted to [w] x [h]: its rows take the height there is. */
+    fun buildKeys(w: Float, h: Float): Layout {
+        val s = minOf(w / REF_W, h / (2f * MIN_ROW + GAP + 2f * 16f + BOTTOM))
+        val full = build(REF_W * s, h + TOP_H * s)
+        return full.moved(s, (w - REF_W * s) / 2f, full.oy - TOP_H * s)
     }
 
     /** Fit the panel to a view of [w] x [h] pixels. */

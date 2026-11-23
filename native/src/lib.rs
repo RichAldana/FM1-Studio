@@ -3,4 +3,6 @@ pub mod engine;
 pub mod usbin;
 pub mod recorder;
 pub mod dsp;
+pub mod state;
+pub mod fx;
 mod jni_api;

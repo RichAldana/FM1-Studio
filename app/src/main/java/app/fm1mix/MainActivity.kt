@@ -23,14 +23,21 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * One screen: a top bar (firmware ▾, slicer, record, power, MIDI light, CPU, menu) over the FM-1 panel.
- * The machine powers on by itself when the app opens, with the last firmware chosen in the catalogue (Chordism the
- * first time, downloaded then). Menus are bottom sheets (Sheet.kt).
+ * One screen: a top bar (firmware ▾, slicer, record, power, MIDI light, CPU, menu) over two zones that each show
+ * one page at a time, a swipe from their edge to change (Zones.kt): the middle one the FM-1's screen, encoders and
+ * buttons, the recorder (RecorderView) or the effects (FxPadView: two thirds pad, a third to choose); the bottom
+ * one the keyboard or the mixer (MixerView). The first time, no firmware: the user picks one in the catalogue; then the machine powers
+ * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView
     private lateinit var fwName: TextView
-    private lateinit var powerBtn: TextView
+    private lateinit var powerBtn: PowerButton
+    private lateinit var keysPanel: PanelView
+    private lateinit var recView: RecorderView
+    private lateinit var mixView: MixerView
+    private val m4 = FloatArray(4)
+    private val statPeak = FloatArray(2)
     private lateinit var recBtn: TextView
     private val recorder by lazy { Recorder(this) }
     private lateinit var midiDot: View
@@ -68,6 +75,8 @@ class MainActivity : ComponentActivity() {
     private var balEmuPct = 0                       // -100 left .. 100 right
     private var balExtPct = 0
     private var masterPct = 100
+    /** the EQs' bands in dB: [source * 3 + band], sources EQ_EMU, EQ_EXT, EQ_MASTER, bands low, mid, high */
+    private val eqDb = IntArray(9)
     private var outTarget = AudioIo.OUT_FM1
     private var lowLatency = false
     private var offsetMs = 0                        // > 0: the real FM-1 later; < 0: the emulated one later
@@ -83,7 +92,8 @@ class MainActivity : ComponentActivity() {
     private val mi = IntArray(2)
 
     companion object {
-        const val DEFAULT_FW = "cat:" + FirmwareCatalog.DEFAULT_ID
+        /** none: the user picks the first firmware (then the last one chosen comes back) */
+        const val DEFAULT_FW = ""
         /** the emulated clock follows the firmware's measured minimum (with a margin) */
         const val MHZ_AUTO = 0
         const val PANEL_PROFILE = "remotefm1-panel.json"
@@ -111,7 +121,7 @@ class MainActivity : ComponentActivity() {
             val name = (uri.lastPathSegment ?: "profil.json").substringAfterLast('/').let { if (it.endsWith(".json")) it else "$it.json" }
             File(dir, name).writeText(txt)
             profileName = name
-            prefs.edit().putString("profile", name).apply()
+            fwPutStr("profile", name)
             applyMidiMode()
         }
     }
@@ -122,16 +132,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(s)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         firmware = prefs.getString("firmware", DEFAULT_FW) ?: DEFAULT_FW
-        if (firmware.startsWith("asset:")) firmware = DEFAULT_FW          // (0.9 and before: Chordism built in)
-        midiMode = prefs.getInt("midiMode", 0)
-        profileName = prefs.getString("profile", profileName) ?: profileName
-        mhz = prefs.getInt("mhz", 240)
+        if (firmware.startsWith("asset:")) firmware = "cat:chordism"      // (0.9 and before: Chordism built in)
+        loadFirmwarePrefs()
         newChip = prefs.getBoolean("newChip", false)
-        gEmuPct = prefs.getInt("gEmu", 100)
         gExtPct = prefs.getInt("gExt", 100)
-        balEmuPct = prefs.getInt("balEmu", 0)
         balExtPct = prefs.getInt("balExt", 0)
         masterPct = prefs.getInt("master", 100)
+        for (i in 3 until 9) eqDb[i] = prefs.getInt("eq$i", 0)
         outTarget = prefs.getInt("out", AudioIo.OUT_FM1)
         lowLatency = prefs.getBoolean("lowLatency", false)
         offsetMs = prefs.getInt("offsetMs", 0)
@@ -150,8 +157,27 @@ class MainActivity : ComponentActivity() {
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         root.addView(status)
-        panel = PanelView(this)
-        root.addView(panel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        panel = PanelView(this, PanelView.PART_TOP)
+        panel.potValue = fwInt("pot", 1023)
+        panel.onPot = { fwPut("pot", it) }
+        keysPanel = PanelView(this, PanelView.PART_KEYS)
+        recView = RecorderView(this).apply {
+            onRec = { toggleRecord() }
+            onSlice = { openSlicer(recorder.lastKept.firstOrNull()) }
+        }
+        mixView = MixerView(this).apply {
+            onVol = { s, v -> setVolume(s, v) }
+            onEq = { s, b, db -> eqDb[3 * s + b] = db; putEq(3 * s + b, db); applyMix() }
+        }
+        loadEffects()
+        val mid = SwipeZone(this, listOf(panel, recView, FxPadView(this)), listOf("FM-1", "Enregistreur", "Effets"),
+            prefs.getInt("pageMid", 0)) { prefs.edit().putInt("pageMid", it).apply() }
+        val bottom = SwipeZone(this, listOf(keysPanel, mixView), listOf("Clavier", "Mixeur et EQ"),
+            prefs.getInt("pageBottom", 0).coerceIn(0, 1)) { prefs.edit().putInt("pageBottom", it).apply() }
+        root.addView(Zones(this, mid, bottom, PanelLayout.TOP_H / PanelLayout.REF_W + 0.02f),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        syncMixer()
+        recView.info = recInfo()
         // Android 15 draws apps under the status and navigation bars: keep the bar and the panel clear of them
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -187,10 +213,7 @@ class MainActivity : ComponentActivity() {
         bar.addView(recBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)).apply { setMargins(dp(6), 0, 0, 0) })
         recBtn.minWidth = dp(42)
         recBtn.setPadding(dp(8), 0, dp(8), 0)
-        powerBtn = TextView(this).apply {
-            text = "⏻"; textSize = 20f; gravity = Gravity.CENTER
-            setOnClickListener { togglePower() }
-        }
+        powerBtn = PowerButton(this).apply { setOnClickListener { togglePower() } }
         bar.addView(powerBtn, LinearLayout.LayoutParams(dp(42), dp(42)).apply { setMargins(dp(6), 0, dp(6), 0) })
         midiDot = View(this).apply { background = pill(0xFF4A4B50.toInt(), 0, dp(6)) }
         midiLabel = TextView(this).apply { text = "MIDI"; textSize = 10f; setTextColor(DIM); gravity = Gravity.CENTER }
@@ -250,7 +273,8 @@ class MainActivity : ComponentActivity() {
     }.getOrNull()
 
     private fun firmwareLabel(fw: String): String =
-        if (fw.startsWith("cat:")) (entryOf(fw)?.name ?: fw.removePrefix("cat:")).uppercase()
+        if (fw.isEmpty()) "CHOISIR UN FIRMWARE"
+        else if (fw.startsWith("cat:")) (entryOf(fw)?.name ?: fw.removePrefix("cat:")).uppercase()
         else fw.substringAfter(':').removeSuffix(".fwsc").replace('-', ' ').uppercase()
 
     /** the clock the firmware runs at: the one chosen, or its measured minimum with a margin (less work for the phone) */
@@ -292,6 +316,12 @@ class MainActivity : ComponentActivity() {
 
     private fun powerOn() {
         if (running || booting) return
+        if (firmware.isEmpty()) {                     // none chosen yet: the catalogue, to pick the first one
+            showPower()
+            status.text = "Choisis un firmware : il démarrera, puis reviendra à chaque ouverture."
+            ui.post { if (sheet == null) openCatalog() }
+            return
+        }
         val bytes = firmwareBytes(firmware)
         if (bytes == null) {
             val e = entryOf(firmware)
@@ -304,9 +334,11 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        val state = stateFile()
+        flashFile = state
+        // (before 0.15: the whole flash image, kept by the package's hash: the same package only)
         val key = MessageDigest.getInstance("SHA-256").digest(bytes).take(8).joinToString("") { "%02x".format(it) }
-        val flash = File(filesDir, "flash-$key.bin")
-        flashFile = flash
+        val flash = if (state.exists()) state else File(filesDir, "flash-$key.bin")
         booting = true
         showPower()
         status.text = "Démarrage de ${firmwareLabel(firmware)}…"
@@ -325,6 +357,7 @@ class MainActivity : ComponentActivity() {
                 Native.setLatency(lowLatency, offsetMs)
                 Native.setLimiter(limiter)
                 applyMix()
+                FxState.send()
                 Native.pot(panel.potValue)
                 applyMidiMode()
                 val micOk = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -360,15 +393,19 @@ class MainActivity : ComponentActivity() {
             recorder.stop()
             val where = recorder.keep(recorder.defaultName)
             Toast.makeText(this, "Enregistré : $where", Toast.LENGTH_LONG).show()
+            recView.hasTake = true
             showRec()
         }
         if (running) {
             panel.releaseAll()
+            keysPanel.releaseAll()
+            Native.fxTouch(0.5f, 0.5f, false)
             running = false
             audio.stop()
-            Native.stop()?.let { f -> flashFile?.let { runCatching { it.writeBytes(f) } } }
+            Native.stop()?.let { f -> flashFile?.let { writeState(it, f) } }
         }
         panel.clearScreen()
+        keysPanel.clearScreen()
         cpu.text = "–"
         status.text = if (prefs.getBoolean("power", true)) "" else "Éteint"
         showPower()
@@ -378,8 +415,8 @@ class MainActivity : ComponentActivity() {
         val on = running || booting
         fwName.text = firmwareLabel(firmware) + " ▾"
         panel.powered = running
-        powerBtn.setTextColor(if (on) 0xFF1E1F22.toInt() else 0xFFE5534B.toInt())
-        powerBtn.background = pill(if (on) 0xFF62D36E.toInt() else 0, if (on) 0 else 0xFFE5534B.toInt(), dp(21))
+        keysPanel.powered = running
+        powerBtn.on = on
     }
 
     private fun selectFirmware(fw: String) {
@@ -387,7 +424,77 @@ class MainActivity : ComponentActivity() {
         powerOff()
         firmware = fw
         prefs.edit().putString("firmware", fw).putBoolean("power", true).apply()
+        loadFirmwarePrefs()
+        audio.gEmu = gEmuPct / 100f
+        syncMixer()
         powerOn()
+    }
+
+    // ------------------------------------------------------------------ each firmware as it was left
+
+    /*
+     * Each firmware comes back as it was left, after a restart of the app or another firmware in between:
+     *  - what the firmware saved itself (its patches, presets, settings, projects: on the emulated flash, as on a
+     *    real FM-1): its own file in state/, written a second after the firmware writes its flash (Native.savedIfChanged:
+     *    a crash or a killed app loses a second of it at most) and when it stops. A newer version of the same
+     *    firmware boots with it, as a real FM-1 keeps its data through an update;
+     *  - the app's settings that depend on the firmware: its clock, what MIDI does to it and the profile, its volume,
+     *    balance and EQ in the mixer, the screen's MASTER: prefs "name@firmware" (the global ones before 0.15 as the
+     *    starting point).
+     * What the firmware has not saved (an edit not yet saved: Chordism's "*") lives in the emulated RAM, which is not
+     * kept: as on a real FM-1 switched off.
+     */
+    private fun fwKey(name: String, fw: String = firmware) = "$name@$fw"
+    private fun fwInt(name: String, def: Int) = prefs.getInt(fwKey(name), prefs.getInt(name, def))
+    private fun fwPut(name: String, v: Int) = prefs.edit().putInt(fwKey(name), v).apply()
+    private fun fwPutStr(name: String, v: String) = prefs.edit().putString(fwKey(name), v).apply()
+
+    private fun loadFirmwarePrefs() {
+        midiMode = fwInt("midiMode", 0)
+        profileName = prefs.getString(fwKey("profile"), prefs.getString("profile", PANEL_PROFILE)) ?: PANEL_PROFILE
+        mhz = fwInt("mhz", 240)
+        gEmuPct = fwInt("gEmu", 100)
+        balEmuPct = fwInt("balEmu", 0)
+        for (i in 0 until 3) eqDb[i] = fwInt("eq$i", 0)
+        if (::panel.isInitialized) panel.potValue = fwInt("pot", 1023)
+        beforePanel = null
+    }
+
+    /** the firmware's own saved state (state.rs), one file per firmware */
+    private fun stateFile(fw: String = firmware) =
+        File(File(filesDir, "state").apply { mkdirs() }, fw.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".fm1s")
+
+    private val saver = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    /** written whole or not at all (a temporary file, then renamed) */
+    private fun writeState(f: File, data: ByteArray) {
+        val tmp = File(f.parentFile, f.name + ".tmp")
+        runCatching { tmp.writeBytes(data); if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) } }
+    }
+
+    /** the tick's: what the firmware saved since, to its file (off the screen's thread) */
+    private fun saveStateIfChanged() {
+        val f = stateFile()
+        saver.execute { Native.savedIfChanged()?.let { writeState(f, it) } }
+    }
+
+    /** Forget what this firmware saved (it starts as new), after a question. */
+    private fun forgetState(fw: String) {
+        val f = stateFile(fw)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Effacer la mémoire de ${firmwareLabel(fw)} ?")
+            .setMessage("Ses sons, réglages et projets enregistrés sur le FM-1 émulé sont effacés : il repart comme neuf. Les réglages de l'appli (mixeur, MIDI, horloge) restent.")
+            .setPositiveButton("Effacer") { _, _ ->
+                val was = running && firmware == fw
+                if (was) { ui.removeCallbacks(tick); running = false; audio.stop(); Native.stop() }   // (not saved again)
+                f.delete()
+                saver.execute { f.delete() }   // (after a save still on its way)
+                sheet?.close()
+                Toast.makeText(this, "Mémoire effacée", Toast.LENGTH_SHORT).show()
+                if (was) { showPower(); powerOn() }
+            }
+            .setNegativeButton("Annuler", null)
+            .show()
     }
 
     // ------------------------------------------------------------------ refresh
@@ -399,6 +506,12 @@ class MainActivity : ComponentActivity() {
             Native.lcd(px)
             Native.leds(leds)
             panel.update(px, leds)
+            keysPanel.update(px, leds)
+            // the peaks of this frame: the mixer's meters, the recorder's wave, the status line's
+            Native.meters(m4)
+            mixView.levels(m4[0], m4[1], m4[2])
+            if (recorder.recording) recView.addPeak(m4[3])
+            statPeak[0] = maxOf(statPeak[0], m4[0]); statPeak[1] = maxOf(statPeak[1], m4[1])
             panelRemote.lights(leds)
             Native.midiInfo(mi)
             if (recorder.recording && n % 15 == 0) showRec()
@@ -407,6 +520,7 @@ class MainActivity : ComponentActivity() {
             val active = mi[0] != lastMidiCount || clockOn
             lastMidiCount = mi[0]
             midiDot.background = pill(if (active) AMBER else 0xFF4A4B50.toInt(), 0, dp(6))
+            if (n % 30 == 0) saveStateIfChanged()
             if (n++ % 15 == 0) {
                 val load = Native.load()
                 if (load == -2) {
@@ -415,7 +529,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     cpu.text = if (load >= 0) "$load%" else "–"
                     cpu.setTextColor(if (load > 85) 0xFFFF6B6B.toInt() else 0xFFFFB3A8.toInt())
-                    Native.meters(mt)
+                    mt[0] = minOf(1f, statPeak[0]); mt[1] = minOf(1f, statPeak[1]); statPeak.fill(0f)
                     val clk = if (clockOn) "horloge MIDI reçue" else "pas d'horloge"
                     val got = audio.capturedSamples
                     val rateNow = ((got - lastCaptured) * 1000L / 2L / maxOf(1L, now - lastCaptureMs)).toInt()
@@ -425,6 +539,7 @@ class MainActivity : ComponentActivity() {
                     val cap = cs + if (cs.startsWith("capture ") && !cs.startsWith("capture impossible"))
                         " · %d Hz reçus".format(rateNow) else ""
                     Native.audioInfo(ai)
+                    mixView.limiterDb = if (limiter) ai[2] else 0f
                     val fm1q = if (cs.startsWith("capture ") && !cs.startsWith("capture impossible")) " · FM-1 %.0f ms, %+.0f ppm".format(ai[0], ai[1]) else ""
                     val lim = if (limiter && ai[2] < -0.5f) " · limiteur %.0f dB".format(ai[2]) else ""
                     status.text = "son → ${audio.outputName()} · $cap$fm1q · $clk · émulé %.2f / FM-1 %.2f$lim $modeMsg".format(mt[0], mt[1])
@@ -436,7 +551,29 @@ class MainActivity : ComponentActivity() {
 
     // ------------------------------------------------------------------ recording
 
+    /** under the recorder's wave */
+    private fun recInfo() = (if (recorder.mode == Recorder.MODE_MIX) "Le mix" else "Deux pistes") + " · " + recFormat()
+
+    /** a fader of the mixer page: the emulated FM-1 (its firmware's), the real one, the master */
+    private fun setVolume(s: Int, v: Int) {
+        when (s) {
+            0 -> { gEmuPct = v; audio.gEmu = v / 100f; fwPut("gEmu", v) }
+            1 -> { gExtPct = v; audio.gExt = v / 100f; prefs.edit().putInt("gExt", v).apply() }
+            else -> { masterPct = v; prefs.edit().putInt("master", v).apply(); applyMix() }
+        }
+    }
+
+    /** the mixer page as the settings are (they change from the menu too) */
+    private fun syncMixer() {
+        if (!::mixView.isInitialized) return
+        mixView.set(intArrayOf(gEmuPct, gExtPct, masterPct), eqDb)
+    }
+
     private fun showRec() {
+        if (::recView.isInitialized) {
+            recView.setRecording(recorder.recording)
+            recView.info = recInfo()
+        }
         if (recorder.recording) {
             val t = recorder.seconds()
             val lost = recorder.dropped()
@@ -470,13 +607,15 @@ class MainActivity : ComponentActivity() {
             .setView(box)
             .setPositiveButton("Enregistrer") { _, _ ->
                 Toast.makeText(this, "Enregistré : " + recorder.keep(field.text.toString()), Toast.LENGTH_LONG).show()
+                recView.hasTake = true
             }
             .setNeutralButton("Enregistrer et découper") { _, _ ->
                 recorder.keep(field.text.toString())
+                recView.hasTake = true
                 openSlicer(recorder.lastKept.firstOrNull())
             }
             .setNegativeButton("Supprimer") { _, _ -> recorder.discard() }
-            .setOnCancelListener { recorder.keep(recorder.defaultName) }
+            .setOnCancelListener { recorder.keep(recorder.defaultName); recView.hasTake = true }
             .show()
         field.requestFocus()
     }
@@ -674,6 +813,11 @@ class MainActivity : ComponentActivity() {
             e.hubPage?.let { h -> p.nav("Sur The Firmware Hub") { open(h) } }
             e.installer?.let { i -> p.nav("L'installer sur le FM-1", "page de l'auteur") { open(i) } }
         }
+        if (stateFile("cat:${e.id}").exists()) {
+            p.group("Mémoire")
+            p.info("Sauvegardé", kb(stateFile("cat:${e.id}").length()) + " · revient à chaque lancement")
+            p.action("Effacer sa mémoire", "Ses sons et réglages enregistrés : il repart comme neuf", danger = true) { forgetState("cat:${e.id}") }
+        }
         if (inst != null) {
             p.group()
             p.action("Supprimer du téléphone", kb(inst.file.length()), danger = true) {
@@ -705,7 +849,7 @@ class MainActivity : ComponentActivity() {
             nav("Firmware", firmwareLabel(firmware).lowercase().replaceFirstChar { it.uppercase() }) { sh.push("Firmwares") { catalogPage(sh) } }
             group("Son")
             nav("Sortie", outName()) { sh.push("Sortie du son") { outputPage() } }
-            nav("Mixeur", mixSummary()) { sh.push("Mixeur") { mixerPage() } }
+            nav("Mixeur et EQ", mixSummary()) { sh.push("Mixeur et EQ") { mixerPage() } }
             toggle("Latence basse", "Réserves de 20-25 ms au lieu de 50-60 : moins de retard, un peu plus de risque de craquements", lowLatency) {
                 lowLatency = it; prefs.edit().putBoolean("lowLatency", it).apply(); Native.setLatency(lowLatency, offsetMs)
             }
@@ -741,25 +885,55 @@ class MainActivity : ComponentActivity() {
     /** a balance near the centre is the centre (a finger can hardly land on 0) */
     private fun snap(v: Int) = if (kotlin.math.abs(v) < 5) 0 else v
 
-    private fun applyMix() = Native.setMix(balEmuPct / 100f, balExtPct / 100f, masterPct / 100f)
+    private fun applyMix() {
+        Native.setMix(balEmuPct / 100f, balExtPct / 100f, masterPct / 100f)
+        for (s in 0 until 3) Native.setEq(s, eqDb[3 * s].toFloat(), eqDb[3 * s + 1].toFloat(), eqDb[3 * s + 2].toFloat())
+        syncMixer()
+    }
+
+    /** the emulated FM-1's EQ (0..2) is the firmware's; the real FM-1's and the master's (3..8) the app's */
+    private fun putEq(i: Int, v: Int) = if (i < 3) fwPut("eq$i", v) else prefs.edit().putInt("eq$i", v).apply()
+
+    private fun dbName(v: Int) = if (v > 0) "+$v dB" else if (v < 0) "$v dB" else "0 dB"
+    private fun eqSummary(s: Int) = if ((0 until 3).all { eqDb[3 * s + it] == 0 }) "plat"
+        else (0 until 3).joinToString(" · ") { b -> listOf("G", "M", "A")[b] + " " + eqDb[3 * s + b].let { if (it > 0) "+$it" else "$it" } }
+
+    /** One EQ: three bands, ±12 dB. */
+    private fun Sheet.Page.eqPage(s: Int) {
+        group()
+        val names = listOf("Grave (150 Hz, plateau)", "Médium (1 kHz, cloche)", "Aigu (6 kHz, plateau)")
+        for (b in 0 until 3) slider(names[b], eqDb[3 * s + b], -12, 12, { dbName(it) }) {
+            eqDb[3 * s + b] = it; putEq(3 * s + b, it); applyMix()
+        }
+        action("Remettre à plat") {
+            for (b in 0 until 3) { eqDb[3 * s + b] = 0; putEq(3 * s + b, 0) }
+            applyMix(); sheet?.refresh()
+        }
+    }
 
     /** Volume and balance of each source, and the master: what plays, and the recording « Le mix ». */
     private fun Sheet.Page.mixerPage() {
         group("FM-1 émulé")
-        slider("Volume", gEmuPct, 0, 150, { "$it %" }) { gEmuPct = it; audio.gEmu = it / 100f; prefs.edit().putInt("gEmu", it).apply() }
-        slider("Balance", balEmuPct, -100, 100, { balName(it) }) { balEmuPct = snap(it); prefs.edit().putInt("balEmu", it).apply(); applyMix() }
+        slider("Volume", gEmuPct, 0, 150, { "$it %" }) { gEmuPct = it; audio.gEmu = it / 100f; fwPut("gEmu", it) }
+        slider("Balance", balEmuPct, -100, 100, { balName(it) }) { balEmuPct = snap(it); fwPut("balEmu", balEmuPct); applyMix() }
+        nav("EQ", eqSummary(0)) { sheet?.push("EQ · FM-1 émulé") { eqPage(0) } }
         group("FM-1 branché (USB)")
         slider("Volume", gExtPct, 0, 150, { "$it %" }) { gExtPct = it; audio.gExt = it / 100f; prefs.edit().putInt("gExt", it).apply() }
         slider("Balance", balExtPct, -100, 100, { balName(it) }) { balExtPct = snap(it); prefs.edit().putInt("balExt", it).apply(); applyMix() }
+        nav("EQ", eqSummary(1)) { sheet?.push("EQ · FM-1 branché") { eqPage(1) } }
         group("Sortie")
         slider("Master", masterPct, 0, 150, { "$it %" }) { masterPct = it; prefs.edit().putInt("master", it).apply(); applyMix() }
+        nav("EQ master", eqSummary(2)) { sheet?.push("EQ · master") { eqPage(2) } }
         action("Tout remettre à zéro") {
             gEmuPct = 100; gExtPct = 100; balEmuPct = 0; balExtPct = 0; masterPct = 100
             audio.gEmu = 1f; audio.gExt = 1f
-            prefs.edit().putInt("gEmu", 100).putInt("gExt", 100).putInt("balEmu", 0).putInt("balExt", 0).putInt("master", 100).apply()
+            prefs.edit().putInt("gExt", 100).putInt("balExt", 0).putInt("master", 100).apply()
+            fwPut("gEmu", 100); fwPut("balEmu", 0)
+            for (i in 0 until 9) { eqDb[i] = 0; putEq(i, 0) }
             applyMix(); sheet?.refresh()
         }
-        note("Vaut pour ce qui sort et pour l'enregistrement « Le mix » (le limiteur après le master). « Deux pistes » " +
+        note("Ordre : l'EQ de chaque FM-1, son volume et sa balance, puis le master et son EQ, puis le limiteur. " +
+            "Vaut pour ce qui sort et pour l'enregistrement « Le mix ». « Deux pistes » " +
             "garde les deux sons bruts, pour les retravailler. Balance : vers un côté, l'autre canal baisse ; " +
             "l'image stéréo de chaque FM-1 est gardée.")
     }
@@ -778,6 +952,35 @@ class MainActivity : ComponentActivity() {
         prefs.edit().putInt("out", t).apply()
         audio.target = t
         audio.route()
+        fxOutput()
+    }
+
+    /** played on the FM-1, the real FM-1 does not go through the phone: the pad cannot take it (its send FM-1 off) */
+    private fun fxOutput() {
+        FxState.fm1Out = outTarget == AudioIo.OUT_FM1
+        if (FxState.fm1Out && FxState.target == 2) FxState.target = 0
+        FxState.send()
+    }
+
+    /** The pad's effects (native/src/fx.rs, assets/fx_profiles.json), made once; the last choices back. */
+    private fun loadEffects() {
+        if (FxState.catalog == null) {
+            val json = runCatching { assets.open("fx_profiles.json").use { it.readBytes().toString(Charsets.UTF_8) } }.getOrDefault("[]")
+            val err = Native.fxLoad(json)
+            if (err.isNotEmpty()) { status.text = "Effets : $err"; return }
+            FxState.catalog = FxCatalog(json, Native.fxList())
+        }
+        val cat = FxState.catalog ?: return
+        val sel = cat.all.firstOrNull { it.id == prefs.getString("fxId", "") }
+        FxState.selected = sel?.index ?: -1
+        FxState.type = sel?.type ?: prefs.getString("fxType", null) ?: cat.types.firstOrNull() ?: ""
+        FxState.target = prefs.getInt("fxTarget", 0)
+        FxState.hold = false
+        FxState.onChange = {
+            prefs.edit().putString("fxId", cat.all.getOrNull(FxState.selected)?.id ?: "")
+                .putString("fxType", FxState.type).putInt("fxTarget", FxState.target).apply()
+        }
+        fxOutput()
     }
 
     private fun panelSub(): String {
@@ -794,10 +997,10 @@ class MainActivity : ComponentActivity() {
             else -> toggle("Piloter l'émulé", panelSub(), panelRemote.state == true) { panelRemote.set(it) }
         }
         group("Ce que fait le MIDI reçu")
-        for ((t, sub, k) in MIDI_MODES) choice(t, sub, midiMode == k) { midiMode = k; prefs.edit().putInt("midiMode", k).apply(); applyMidiMode() }
+        for ((t, sub, k) in MIDI_MODES) choice(t, sub, midiMode == k) { midiMode = k; fwPut("midiMode", k); applyMidiMode() }
         group("Profil du contrôleur (« Piloter le panneau »)")
         val names = (assets.list("profiles")?.toList() ?: emptyList()) + (File(filesDir, "profiles").list()?.toList() ?: emptyList())
-        for (nm in names) choice(nm.removeSuffix(".json"), null, nm == profileName) { profileName = nm; prefs.edit().putString("profile", nm).apply(); applyMidiMode() }
+        for (nm in names) choice(nm.removeSuffix(".json"), null, nm == profileName) { profileName = nm; fwPutStr("profile", nm); applyMidiMode() }
         action("Charger un profil JSON…") { pickProfile.launch(arrayOf("*/*")) }
         note("remotefm1-panel : choisi tout seul quand LOOM-8 prête ses contrôles, l'ancien réglage revient après.")
     }
@@ -833,7 +1036,7 @@ class MainActivity : ComponentActivity() {
         note("Redémarre le firmware émulé. Si le son craque ou que la charge dépasse 100 %, baisse l'horloge.")
     }
 
-    private fun setClock(v: Int) { if (v != mhz) { mhz = v; prefs.edit().putInt("mhz", v).apply(); restart() } }
+    private fun setClock(v: Int) { if (v != mhz) { mhz = v; fwPut("mhz", v); restart() } }
 
     private fun Sheet.Page.diagnosticPage() {
         val diag = Diagnostic.report(this@MainActivity) + "\nCapture : " + audio.captureStatus() + "\n" + audio.usbReport()
@@ -849,16 +1052,23 @@ class MainActivity : ComponentActivity() {
 
     private fun Sheet.Page.aboutPage() {
         group()
-        text("FM1 Mix 0.13, prototype. Un FM-1 émulé sur le téléphone, mixé avec un vrai FM-1 en USB, enregistré, découpé.")
+        text("FM1 Mix 0.17, bêta. Un FM-1 émulé sur le téléphone, mixé avec un vrai FM-1 en USB, enregistré, découpé.")
         group("Licences")
         info("FM1 Mix", "GPL-3.0")
         info("Émulateur fm1-emu", "MIT · Joakim Eriksson")
         info("Découpe (CHOP de SLOOP)", "GPL-3.0")
         info("Envoi vers LOOM-8", "MPL-2.0 · Charles Vestal")
         info("Liste des firmwares", "fm1-emu, The Firmware Hub")
+        info("Effets du pad : code généré par Faust", "GRAME · bibliothèques Faust")
+        info("Filtre, Hall, Phaser, Flanger, Overdrive, Pompe", "MIT (STK-4.3) · Julius O. Smith III")
+        info("Écho, Pitch, lissages", "LGPL avec exception Faust · GRAME")
+        info("Nuage diffus", "GPL-2.0+ · Julian Parker, Till Bovermann")
+        info("Tape stop, Beat repeat, moteur du pad", "GPL-3.0 · FM1 Mix")
         nav("Code de fm1-emu") { open("https://github.com/joakimeriksson/fm1-emu") }
         nav("SLOOP") { open("https://github.com/isod89/sloop-fm1") }
         nav("The Firmware Hub") { open(FirmwareCatalog.HUB) }
+        nav("Faust") { open("https://faust.grame.fr") }
+        nav("Bibliothèques Faust") { open("https://github.com/grame-cncm/faustlibraries") }
         note("Chaque firmware reste sous la licence de son auteur (sa page dans le catalogue).")
     }
 
@@ -893,7 +1103,7 @@ class MainActivity : ComponentActivity() {
                 if (beforePanel == null) beforePanel = Pair(midiMode, profileName)
                 midiMode = 2
                 profileName = PANEL_PROFILE
-                prefs.edit().putInt("midiMode", 2).putString("profile", PANEL_PROFILE).apply()
+                fwPut("midiMode", 2); fwPutStr("profile", PANEL_PROFILE)
                 applyMidiMode()
             }
             Toast.makeText(this, "Contrôles du FM-1 → émulé", Toast.LENGTH_SHORT).show()
@@ -901,7 +1111,7 @@ class MainActivity : ComponentActivity() {
             beforePanel?.let { (m, p) ->
                 midiMode = m
                 profileName = p
-                prefs.edit().putInt("midiMode", m).putString("profile", p).apply()
+                fwPut("midiMode", m); fwPutStr("profile", p)
                 applyMidiMode()
             }
             beforePanel = null
