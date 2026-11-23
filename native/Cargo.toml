@@ -1,0 +1,23 @@
+[package]
+name = "fm1mix"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "fm1-emu host for Android: emulated FM-1 + external USB audio mixed into one output"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fm1-core = { path = "../third_party/fm1-emu/crates/fm1-core" }
+fm1-soc = { path = "../third_party/fm1-emu/crates/fm1-soc" }
+fm1-map = { path = "../third_party/fm1-emu/crates/fm1-map" }
+jni = "0.21"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+
+# a workspace of its own: cargo must not look at a Cargo.toml further up
+[workspace]

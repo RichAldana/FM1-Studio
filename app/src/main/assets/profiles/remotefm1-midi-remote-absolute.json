@@ -1,0 +1,185 @@
+{
+  "name": "RemoteFM1 MIDI REMOTE (knobs ABSOLUTE)",
+  "pass_unmapped": false,
+  "keys_mode": "panel",
+  "bindings": [
+    {
+      "src": {
+        "notes": [
+          0,
+          127
+        ]
+      },
+      "to": "keys"
+    },
+    {
+      "src": {
+        "cc": 20
+      },
+      "to": "FX",
+      "mode": "momentary",
+      "label": "FX"
+    },
+    {
+      "src": {
+        "cc": 21
+      },
+      "to": "SCL",
+      "mode": "momentary",
+      "label": "SCL"
+    },
+    {
+      "src": {
+        "cc": 22
+      },
+      "to": "ENV",
+      "mode": "momentary",
+      "label": "ENV"
+    },
+    {
+      "src": {
+        "cc": 23
+      },
+      "to": "LFO",
+      "mode": "momentary",
+      "label": "LFO"
+    },
+    {
+      "src": {
+        "cc": 24
+      },
+      "to": "EDIT",
+      "mode": "momentary",
+      "label": "EDIT"
+    },
+    {
+      "src": {
+        "cc": 25
+      },
+      "to": "GLO",
+      "mode": "momentary",
+      "label": "GLO"
+    },
+    {
+      "src": {
+        "cc": 26
+      },
+      "to": "HOME",
+      "mode": "momentary",
+      "label": "HOME"
+    },
+    {
+      "src": {
+        "cc": 27
+      },
+      "to": "SAVE",
+      "mode": "momentary",
+      "label": "SAVE"
+    },
+    {
+      "src": {
+        "cc": 28
+      },
+      "to": "ARP",
+      "mode": "momentary",
+      "label": "ARP"
+    },
+    {
+      "src": {
+        "cc": 29
+      },
+      "to": "SEQ",
+      "mode": "momentary",
+      "label": "SEQ"
+    },
+    {
+      "src": {
+        "cc": 30
+      },
+      "to": "PLAY",
+      "mode": "momentary",
+      "label": "PLAY"
+    },
+    {
+      "src": {
+        "cc": 31
+      },
+      "to": "REC",
+      "mode": "momentary",
+      "label": "REC"
+    },
+    {
+      "src": {
+        "cc": 85
+      },
+      "to": "OCT-",
+      "mode": "momentary",
+      "label": "OCT-"
+    },
+    {
+      "src": {
+        "cc": 86
+      },
+      "to": "OCT+",
+      "mode": "momentary",
+      "label": "OCT+"
+    },
+    {
+      "src": {
+        "cc": 102
+      },
+      "to": "SELECT",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "cc": 103
+      },
+      "to": "ALGORITHM",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "cc": 104
+      },
+      "to": "PRESETS",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "cc": 105
+      },
+      "to": "KNOB1",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "cc": 106
+      },
+      "to": "KNOB2",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "cc": 107
+      },
+      "to": "KNOB3",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "cc": 108
+      },
+      "to": "KNOB4",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "cc": 109
+      },
+      "to": "MASTER",
+      "mode": "absolute"
+    }
+  ],
+  "notes": "FM-1 with RemoteFM1 standalone, GLO + FX = MIDI REMOTE. Set KNOBS on its settings page (hold HOME) to match."
+}

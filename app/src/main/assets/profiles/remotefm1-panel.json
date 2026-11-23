@@ -1,0 +1,216 @@
+{
+  "name": "RemoteFM1 panel (session)",
+  "pass_unmapped": false,
+  "keys_mode": "panel",
+  "bindings": [
+    {
+      "src": {
+        "ch": 16,
+        "notes": [
+          53,
+          79
+        ]
+      },
+      "to": "keys",
+      "fold": false
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 0
+      },
+      "to": "OCT-",
+      "mode": "momentary",
+      "label": "OCT-"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 1
+      },
+      "to": "OCT+",
+      "mode": "momentary",
+      "label": "OCT+"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 2
+      },
+      "to": "FX",
+      "mode": "momentary",
+      "label": "FX"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 3
+      },
+      "to": "SCL",
+      "mode": "momentary",
+      "label": "SCL"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 4
+      },
+      "to": "ENV",
+      "mode": "momentary",
+      "label": "ENV"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 5
+      },
+      "to": "LFO",
+      "mode": "momentary",
+      "label": "LFO"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 6
+      },
+      "to": "EDIT",
+      "mode": "momentary",
+      "label": "EDIT"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 7
+      },
+      "to": "GLO",
+      "mode": "momentary",
+      "label": "GLO"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 8
+      },
+      "to": "HOME",
+      "mode": "momentary",
+      "label": "HOME"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 9
+      },
+      "to": "SAVE",
+      "mode": "momentary",
+      "label": "SAVE"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 10
+      },
+      "to": "ARP",
+      "mode": "momentary",
+      "label": "ARP"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 11
+      },
+      "to": "SEQ",
+      "mode": "momentary",
+      "label": "SEQ"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 12
+      },
+      "to": "PLAY",
+      "mode": "momentary",
+      "label": "PLAY"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "note": 13
+      },
+      "to": "REC",
+      "mode": "momentary",
+      "label": "REC"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 16
+      },
+      "to": "SELECT",
+      "mode": "relative-64"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 17
+      },
+      "to": "ALGORITHM",
+      "mode": "relative-64"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 18
+      },
+      "to": "KNOB1",
+      "mode": "relative-64"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 19
+      },
+      "to": "KNOB2",
+      "mode": "relative-64"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 20
+      },
+      "to": "KNOB3",
+      "mode": "relative-64"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 21
+      },
+      "to": "KNOB4",
+      "mode": "relative-64"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 22
+      },
+      "to": "PRESETS",
+      "mode": "relative-64"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 7
+      },
+      "to": "MASTER",
+      "mode": "absolute"
+    },
+    {
+      "src": {
+        "ch": 15,
+        "cc": 39
+      },
+      "to": "ignore"
+    }
+  ],
+  "notes": "FM-1 running RemoteFM1 in a host session: keys ch16, buttons ch15, encoders CC16-22 relative, MASTER CC7/39."
+}
