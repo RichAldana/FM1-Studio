@@ -1,56 +1,53 @@
 [
-  {"id": "faust.moog", "label": "Filtre Moog", "category": "Filtre", "mode": "insert",
-   "attackMs": 20, "releaseMs": 150, "gesture": "return",
-   "x": {"param": "cutoff", "curve": "exp", "min": 40, "max": 18000, "smoothMs": 15, "rest": 18000},
-   "y": {"param": "res", "curve": "lin", "min": 0.0, "max": 0.9, "smoothMs": 20, "rest": 0.0}},
+  {"id": "faust.moog", "label": "Filtre Moog", "labelEn": "Moog filter", "category": "Filtre", "categoryEn": "Filter", "attackMs": 20, "releaseMs": 150, "gesture": "return", "x": [{"param": "cutoff", "curve": "exp", "min": 80, "max": 16000, "smoothMs": 15, "rest": 16000}], "y": [{"param": "res", "min": 0.1, "max": 0.85, "rest": 0.1}, {"param": "drive", "min": 0, "max": 0.4, "from": 0.5, "rest": 0}], "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ résonance, puis saturation", "yLabelEn": "↑ resonance, then drive"},
 
-  {"id": "faust.echo", "label": "Écho", "category": "Delay", "mode": "send", "tail": true, "latch": true,
-   "attackMs": 30, "releaseMs": 150, "gesture": "hold",
-   "x": {"param": "time", "curve": "steps", "steps": ["1/16", "1/8", "1/8.", "1/4", "1/2"], "tempoSync": true},
-   "y": {"param": "feedback", "curve": "lin", "min": 0.0, "max": 0.95, "smoothMs": 20}},
+  {"id": "aw.isolator3", "label": "Isolateur", "labelEn": "Isolator", "category": "Filtre", "categoryEn": "Filter", "attackMs": 20, "releaseMs": 150, "gesture": "return", "x": [{"param": "iso", "min": 0.0, "max": 1.0, "smoothMs": 20}], "y": [{"param": "q", "min": 0.1, "max": 0.9}, {"param": "wet", "min": 0.6, "max": 1.0}], "fixed": {"drywet": 1}, "xLabel": "← grave · aigu →", "xLabelEn": "← low · high →", "yLabel": "↑ bande plus étroite", "yLabelEn": "↑ narrower band"},
 
-  {"id": "faust.zita", "label": "Hall", "category": "Reverb", "mode": "send", "tail": true,
-   "attackMs": 30, "releaseMs": 200, "gesture": "hold",
-   "x": {"param": "t60", "curve": "exp", "min": 0.5, "max": 20, "smoothMs": 30},
-   "y": {"param": "mix", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+  {"id": "surge.filter", "label": "Filtre analogique", "labelEn": "Analog filter", "category": "Filtre", "categoryEn": "Filter", "attackMs": 20, "releaseMs": 150, "gesture": "return", "x": [{"param": "cutoff", "curve": "exp", "min": 80, "max": 16000, "smoothMs": 15, "rest": 16000}], "y": [{"param": "res", "min": 0.1, "max": 0.85, "rest": 0.1}, {"param": "drive", "min": 0, "max": 0.5, "from": 0.5, "rest": 0}], "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ résonance, puis saturation", "yLabelEn": "↑ resonance, then drive"},
 
-  {"id": "faust.greyhole", "label": "Nuage diffus", "category": "Reverb", "mode": "send", "tail": true,
-   "attackMs": 30, "releaseMs": 200, "gesture": "hold",
-   "x": {"param": "size", "curve": "lin", "min": 0.5, "max": 3.0, "smoothMs": 30},
-   "y": {"param": "diffusion", "curve": "lin", "min": 0.0, "max": 0.99, "smoothMs": 30}},
+  {"id": "faust.echo", "label": "Écho", "labelEn": "Echo", "category": "Delay", "categoryEn": "Delay", "tail": true, "latch": true, "attackMs": 30, "releaseMs": 150, "gesture": "hold", "x": [{"param": "time", "curve": "steps", "tempoSync": true, "hysteresis": 0.03, "steps": ["1/2", "1/4", "1/8.", "1/8", "1/16"]}], "y": [{"param": "feedback", "min": 0.15, "max": 0.92}, {"param": "wet", "curve": "pow", "exp": 0.6, "min": 0.2, "max": 0.8}, {"param": "loopDrive", "min": 0, "max": 0.5, "from": 0.6}], "xLabel": "← long · court →", "xLabelEn": "← long · short →", "yLabel": "↑ plus de répétitions", "yLabelEn": "↑ more repeats"},
 
-  {"id": "faust.phaser", "label": "Phaser", "category": "Modulation", "mode": "insert",
-   "attackMs": 30, "releaseMs": 200, "gesture": "return",
-   "x": {"param": "speed", "curve": "exp", "min": 0.05, "max": 8, "smoothMs": 30},
-   "y": {"param": "depth", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+  {"id": "surge.delay", "label": "Delay ping-pong", "labelEn": "Ping-pong delay", "category": "Delay", "categoryEn": "Delay", "tail": true, "latch": true, "attackMs": 30, "releaseMs": 150, "gesture": "hold", "x": [{"param": "time", "curve": "steps", "tempoSync": true, "hysteresis": 0.03, "steps": ["1/2", "1/4", "1/8.", "1/8", "1/16"]}], "y": [{"param": "feedback", "min": 0.2, "max": 0.9}, {"param": "wet", "curve": "pow", "exp": 0.6, "min": 0.2, "max": 0.8}, {"param": "width", "min": 0, "max": 12, "from": 0.5}], "xLabel": "← long · court →", "xLabelEn": "← long · short →", "yLabel": "↑ plus de rebonds, plus large", "yLabelEn": "↑ more bounces, wider"},
 
-  {"id": "faust.flanger", "label": "Flanger", "category": "Modulation", "mode": "insert",
-   "attackMs": 30, "releaseMs": 200, "gesture": "return",
-   "x": {"param": "speed", "curve": "exp", "min": 0.05, "max": 5, "smoothMs": 30},
-   "y": {"param": "feedback", "curve": "lin", "min": 0.0, "max": 0.95, "smoothMs": 20}},
+  {"id": "mi.looper", "label": "Boucle granulaire", "labelEn": "Granular loop", "category": "Delay", "categoryEn": "Delay", "tail": true, "attackMs": 30, "releaseMs": 600, "gesture": "action", "x": [{"param": "position", "min": 0.9, "max": 0.15, "smoothMs": 40}], "y": [{"param": "wet", "min": 0.3, "max": 0.9}, {"param": "feedback", "min": 0.1, "max": 0.8}, {"param": "density", "min": 0.3, "max": 0.9}], "fixed": {"size": 0.5, "pitch": 0, "texture": 0.6, "reverb": 0.1, "spread": 0.5}, "xLabel": "← boucle longue · courte →", "xLabelEn": "← long loop · short →", "yLabel": "↑ plus présente · doigt posé : figée", "yLabelEn": "↑ more present · finger held: frozen", "listen": true},
 
-  {"id": "faust.drive", "label": "Overdrive", "category": "Distorsion", "mode": "insert",
-   "attackMs": 15, "releaseMs": 120, "gesture": "return",
-   "x": {"param": "drive", "curve": "lin", "min": 0.05, "max": 1.0, "smoothMs": 20},
-   "y": {"param": "tone", "curve": "exp", "min": 500, "max": 12000, "smoothMs": 20}},
+  {"id": "faust.zita", "label": "Hall", "labelEn": "Hall", "category": "Reverb", "categoryEn": "Reverb", "tail": true, "attackMs": 30, "releaseMs": 200, "gesture": "hold", "x": [{"param": "damp", "curve": "exp", "min": 1500, "max": 14000, "smoothMs": 30}], "y": [{"param": "t60", "curve": "exp", "min": 0.8, "max": 12, "smoothMs": 30}, {"param": "wet", "curve": "pow", "exp": 0.7, "min": 0.15, "max": 0.7}], "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ plus longue", "yLabelEn": "↑ longer"},
 
-  {"id": "faust.pitch", "label": "Pitch", "category": "Pitch", "mode": "insert",
-   "attackMs": 20, "releaseMs": 120, "gesture": "return",
-   "x": {"param": "shift", "curve": "scale", "min": -12, "max": 12, "scale": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
-   "y": {"param": "mix", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+  {"id": "faust.greyhole", "label": "Nuage diffus", "labelEn": "Diffuse cloud", "category": "Reverb", "categoryEn": "Reverb", "tail": true, "attackMs": 30, "releaseMs": 200, "gesture": "hold", "x": [{"param": "damp", "min": 0.9, "max": 0.05, "smoothMs": 30}], "y": [{"param": "size", "min": 0.6, "max": 2.8, "smoothMs": 40}, {"param": "feedback", "min": 0.3, "max": 0.88}, {"param": "diffusion", "min": 0.4, "max": 0.95}, {"param": "modDepth", "min": 0, "max": 0.8}, {"param": "wet", "min": 0.2, "max": 0.8}], "fixed": {}, "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ plus grand, plus flou", "yLabelEn": "↑ bigger, blurrier"},
 
-  {"id": "cpp.tapestop", "label": "Tape stop", "category": "Pitch", "mode": "insert",
-   "attackMs": 5, "releaseMs": 400, "gesture": "action",
-   "x": {"param": "fall", "curve": "exp", "min": 0.05, "max": 2.0, "smoothMs": 10},
-   "y": {"param": "mix", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+  {"id": "aw.kcosmos", "label": "Cosmos", "labelEn": "Cosmos", "category": "Reverb", "categoryEn": "Reverb", "mode": "corners", "tail": true, "attackMs": 30, "releaseMs": 250, "gesture": "hold", "fixed": {"drywet": 1}, "corners": {"bl": {"regen": 0.3, "derez": 0.6, "filter": 0.25, "earlyrf": 0.6, "predlay": 0.0, "wet": 0.35}, "br": {"regen": 0.3, "derez": 1.0, "filter": 0.9, "earlyrf": 0.6, "predlay": 0.0, "wet": 0.35}, "tl": {"regen": 0.95, "derez": 0.5, "filter": 0.3, "earlyrf": 0.3, "predlay": 0.4, "wet": 0.85}, "tr": {"regen": 0.95, "derez": 1.0, "filter": 1.0, "earlyrf": 0.3, "predlay": 0.3, "wet": 0.85}}, "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ immense", "yLabelEn": "↑ huge"},
 
-  {"id": "cpp.beatrepeat", "label": "Beat repeat", "category": "Glitch", "mode": "insert",
-   "attackMs": 3, "releaseMs": 30, "gesture": "action",
-   "x": {"param": "length", "curve": "steps", "steps": ["1/4", "1/8", "1/16", "1/32", "1/64"], "tempoSync": true, "unit": "beats"},
-   "y": {"param": "decay", "curve": "lin", "min": 0.0, "max": 1.0, "smoothMs": 20}},
+  {"id": "aw.crunchcoat", "label": "Reverb rétro", "labelEn": "Retro reverb", "category": "Reverb", "categoryEn": "Reverb", "mode": "corners", "tail": true, "attackMs": 30, "releaseMs": 250, "gesture": "hold", "fixed": {"drywet": 1}, "discrete": ["select"], "corners": {"bl": {"select": 0.15, "regen": 0.3, "derez": 0.45, "wet": 0.35}, "br": {"select": 0.15, "regen": 0.3, "derez": 1.0, "wet": 0.35}, "tl": {"select": 0.85, "regen": 0.85, "derez": 0.35, "wet": 0.85}, "tr": {"select": 0.85, "regen": 0.85, "derez": 0.9, "wet": 0.85}}, "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ plus grande, plus saturée", "yLabelEn": "↑ bigger, crunchier"},
 
-  {"id": "faust.pump", "label": "Pompe", "category": "Dynamique", "mode": "insert",
-   "attackMs": 30, "releaseMs": 200, "gesture": "return",
-   "x": {"param": "thresh", "curve": "lin", "min": -40, "max": 0, "smoothMs": 20},
-   "y": {"param": "ratio", "curve": "exp", "min": 1, "max": 20, "smoothMs": 20}}
+  {"id": "surge.spring", "label": "Ressort", "labelEn": "Spring", "category": "Reverb", "categoryEn": "Reverb", "tail": true, "attackMs": 30, "releaseMs": 200, "gesture": "hold", "x": [{"param": "damping", "min": 0.9, "max": 0.1, "smoothMs": 30}], "y": [{"param": "decay", "min": 0.2, "max": 0.9}, {"param": "size", "min": 0.3, "max": 0.8}, {"param": "wet", "min": 0.2, "max": 0.75}], "fixed": {"spin": 0.5, "chaos": 0.1}, "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ plus longue", "yLabelEn": "↑ longer"},
+
+  {"id": "faust.phaser", "label": "Phaser", "labelEn": "Phaser", "category": "Modulation", "categoryEn": "Modulation", "attackMs": 30, "releaseMs": 200, "gesture": "return", "x": [{"param": "speed", "curve": "exp", "min": 0.05, "max": 8, "smoothMs": 30}], "y": [{"param": "depth", "min": 0.4, "max": 1.0}, {"param": "feedback", "min": 0, "max": 0.8}, {"param": "wet", "curve": "pow", "exp": 0.7, "min": 0.5, "max": 1.0}], "xLabel": "← lent · rapide →", "xLabelEn": "← slow · fast →", "yLabel": "↑ plus profond", "yLabelEn": "↑ deeper"},
+
+  {"id": "faust.flanger", "label": "Flanger", "labelEn": "Flanger", "category": "Modulation", "categoryEn": "Modulation", "attackMs": 30, "releaseMs": 200, "gesture": "return", "x": [{"param": "speed", "curve": "exp", "min": 0.05, "max": 8, "smoothMs": 30}], "y": [{"param": "depth", "min": 0.3, "max": 1.0}, {"param": "feedback", "min": 0, "max": 0.85}, {"param": "wet", "min": 0.5, "max": 1.0}], "xLabel": "← lent · rapide →", "xLabelEn": "← slow · fast →", "yLabel": "↑ plus profond", "yLabelEn": "↑ deeper"},
+
+  {"id": "surge.ensemble", "label": "Ensemble", "labelEn": "Ensemble", "category": "Modulation", "categoryEn": "Modulation", "attackMs": 30, "releaseMs": 200, "gesture": "return", "x": [{"param": "speed", "curve": "exp", "min": 0.25, "max": 4, "smoothMs": 30}], "y": [{"param": "depth", "min": 0.3, "max": 1.0}, {"param": "wet", "min": 0.4, "max": 1.0}, {"param": "feedback", "min": 0, "max": 0.6, "from": 0.6}], "fixed": {"width": 1.2}, "xLabel": "← lent · rapide →", "xLabelEn": "← slow · fast →", "yLabel": "↑ plus profond", "yLabelEn": "↑ deeper"},
+
+  {"id": "faust.drive", "label": "Overdrive", "labelEn": "Overdrive", "category": "Distorsion", "categoryEn": "Distortion", "attackMs": 15, "releaseMs": 120, "gesture": "return", "x": [{"param": "tone", "curve": "exp", "min": 800, "max": 14000, "smoothMs": 20}], "y": [{"param": "drive", "min": 0.1, "max": 1.0}], "xLabel": "← sombre · brillant →", "xLabelEn": "← dark · bright →", "yLabel": "↑ plus saturé (volume compensé)", "yLabelEn": "↑ more drive (level kept)"},
+
+  {"id": "surge.shaper", "label": "Waveshaper", "labelEn": "Waveshaper", "category": "Distorsion", "categoryEn": "Distortion", "attackMs": 15, "releaseMs": 120, "gesture": "return", "x": [{"param": "shape", "curve": "steps", "steps": ["0", "1", "2", "3", "4", "5"], "hysteresis": 0.03, "stepLabels": ["doux", "asym", "sinus", "pli", "dur", "fuzz"], "stepLabelsEn": ["soft", "asym", "sine", "fold", "hard", "fuzz"]}], "y": [{"param": "drive", "curve": "exp", "min": 1.5, "max": 24}], "xLabel": "← doux · dur →", "xLabelEn": "← soft · hard →", "yLabel": "↑ plus saturé (volume compensé)", "yLabelEn": "↑ more drive (level kept)"},
+
+  {"id": "aw.derez2", "label": "Lo-fi", "labelEn": "Lo-fi", "category": "Lo-fi", "categoryEn": "Lo-fi", "attackMs": 15, "releaseMs": 120, "gesture": "return", "x": [{"param": "type", "min": 0, "max": 1, "smoothMs": 20}], "y": [{"param": "amount", "min": 0.15, "max": 1.0}, {"param": "wet", "min": 0.5, "max": 1.0}], "fixed": {"hard": 0.5, "drywet": 1}, "xLabel": "← échantillonnage · bits →", "xLabelEn": "← sample rate · bits →", "yLabel": "↑ plus dégradé", "yLabelEn": "↑ more degraded"},
+
+  {"id": "faust.pitch", "label": "Pitch", "labelEn": "Pitch", "category": "Pitch", "categoryEn": "Pitch", "attackMs": 20, "releaseMs": 120, "gesture": "return", "x": [{"param": "shift", "curve": "scale", "min": -12, "max": 12, "scale": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "hysteresis": 0.03}], "y": [{"param": "wet", "min": 0.3, "max": 1.0}], "xLabel": "← grave · aigu →", "xLabelEn": "← low · high →", "yLabel": "↑ plus présent", "yLabelEn": "↑ more present"},
+
+  {"id": "cpp.tapestop", "label": "Tape stop", "labelEn": "Tape stop", "category": "Pitch", "categoryEn": "Pitch", "attackMs": 5, "releaseMs": 400, "gesture": "action", "x": [{"param": "fall", "curve": "exp", "min": 2.0, "max": 0.15, "smoothMs": 10}], "y": [{"param": "depth", "min": 0.7, "max": 0.0}, {"param": "wet", "min": 0.6, "max": 1.0}], "xLabel": "← chute longue · courte →", "xLabelEn": "← long fall · short →", "yLabel": "↑ jusqu'à l'arrêt", "yLabelEn": "↑ down to a stop"},
+
+  {"id": "mi.texture", "label": "Texture", "labelEn": "Texture", "category": "Granulaire", "categoryEn": "Granular", "mode": "corners", "tail": true, "attackMs": 40, "releaseMs": 600, "gesture": "action", "corners": {"bl": {"size": 0.8, "density": 0.35, "texture": 0.3, "wet": 0.35, "reverb": 0.2}, "br": {"size": 0.2, "density": 0.4, "texture": 0.7, "wet": 0.35, "reverb": 0.1}, "tl": {"size": 0.9, "density": 0.8, "texture": 0.4, "wet": 0.9, "reverb": 0.6}, "tr": {"size": 0.1, "density": 0.9, "texture": 0.8, "wet": 0.9, "reverb": 0.4}}, "fixed": {"position": 0.3, "pitch": 0, "feedback": 0, "spread": 0.5}, "xLabel": "← grains longs · courts →", "xLabelEn": "← long grains · short →", "yLabel": "↑ nappe dense · doigt posé : figée", "yLabelEn": "↑ dense pad · finger held: frozen", "listen": true},
+
+  {"id": "cpp.beatrepeat", "label": "Beat repeat", "labelEn": "Beat repeat", "category": "Glitch", "categoryEn": "Glitch", "attackMs": 3, "releaseMs": 30, "gesture": "action", "x": [{"param": "length", "curve": "steps", "tempoSync": true, "unit": "beats", "hysteresis": 0.03, "steps": ["1/4", "1/8", "1/16", "1/32", "1/64"]}], "y": [{"param": "repeats", "min": 1, "max": 16}, {"param": "wet", "min": 0.6, "max": 1.0}, {"param": "filter", "min": 0, "max": 0.9, "from": 0.7}], "fixed": {"decay": 0.5}, "xLabel": "← long · court →", "xLabelEn": "← long · short →", "yLabel": "↑ plus de répétitions, puis filtrées", "yLabelEn": "↑ more repeats, then filtered", "listen": true},
+
+  {"id": "mi.resonator", "label": "Résonateur modal", "labelEn": "Modal resonator", "category": "Résonateur", "categoryEn": "Resonator", "tail": true, "attackMs": 20, "releaseMs": 250, "gesture": "hold", "x": [{"param": "note", "curve": "scale", "min": 36, "max": 72, "scale": [0, 3, 5, 7, 10], "hysteresis": 0.03}], "y": [{"param": "structure", "min": 0.1, "max": 0.8}, {"param": "brightness", "min": 0.3, "max": 0.9}, {"param": "wet", "min": 0.4, "max": 0.9}], "fixed": {"damping": 0.7, "position": 0.3}, "xLabel": "← grave · aigu →", "xLabelEn": "← low · high →", "yLabel": "↑ plus riche, plus brillant", "yLabelEn": "↑ richer, brighter"},
+
+  {"id": "mi.crossmod", "label": "Modulation croisée", "labelEn": "Cross modulation", "category": "Résonateur", "categoryEn": "Resonator", "attackMs": 20, "releaseMs": 150, "gesture": "return", "x": [{"param": "algorithm", "min": 0, "max": 1, "smoothMs": 30}], "y": [{"param": "timbre", "min": 0.2, "max": 1.0}, {"param": "wet", "min": 0.4, "max": 1.0}], "fixed": {"note": 48, "carrier": 0.6, "level": 0.9, "shape": 1}, "xLabel": "← doux · dur →", "xLabelEn": "← soft · harsh →", "yLabel": "↑ plus marqué", "yLabelEn": "↑ stronger"},
+
+  {"id": "surge.resonator", "label": "Résonateur", "labelEn": "Resonator", "category": "Résonateur", "categoryEn": "Resonator", "tail": true, "attackMs": 20, "releaseMs": 250, "gesture": "hold", "x": [{"param": "note", "curve": "scale", "min": 36, "max": 72, "scale": [0, 3, 5, 7, 10], "hysteresis": 0.03}], "y": [{"param": "res", "min": 0.6, "max": 0.97}, {"param": "wet", "min": 0.3, "max": 0.9}], "fixed": {"drive": 0.2}, "xLabel": "← grave · aigu →", "xLabelEn": "← low · high →", "yLabel": "↑ plus résonant", "yLabelEn": "↑ more resonant"},
+
+  {"id": "faust.pump", "label": "Pompe", "labelEn": "Pump", "category": "Dynamique", "categoryEn": "Dynamics", "attackMs": 30, "releaseMs": 200, "gesture": "return", "x": [{"param": "release", "curve": "exp", "min": 0.6, "max": 0.04, "smoothMs": 30}], "y": [{"param": "thresh", "min": -6, "max": -36}, {"param": "ratio", "curve": "exp", "min": 1.5, "max": 12}], "xLabel": "← relâchement lent · rapide →", "xLabelEn": "← slow release · fast →", "yLabel": "↑ plus compressé", "yLabelEn": "↑ more squashed"},
+
+  {"id": "aw.bezicomp", "label": "Compression", "labelEn": "Compression", "category": "Dynamique", "categoryEn": "Dynamics", "attackMs": 30, "releaseMs": 200, "gesture": "return", "x": [{"param": "speed", "min": 0.1, "max": 0.9, "smoothMs": 30}], "y": [{"param": "comp", "min": 0.2, "max": 1.0}, {"param": "wet", "min": 0.6, "max": 1.0}], "fixed": {"drywet": 1}, "xLabel": "← lente · rapide →", "xLabelEn": "← slow · fast →", "yLabel": "↑ plus compressé", "yLabelEn": "↑ more squashed"}
 ]

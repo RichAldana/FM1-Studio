@@ -1,4 +1,4 @@
-# FM1 Mix (bêta, v0.20)
+# FM1 Mix (bêta, v0.21)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -9,6 +9,39 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- audio USB ---> AudioRecord ---+
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
+
+## v0.21 : les 26 effets du brief, avec la convention de jeu live
+- **La convention** (`native/src/fx.rs`, profils dans `assets/fx_profiles.json`) : X = quoi (à gauche sombre, lent,
+  long ou grave ; à droite brillant, rapide, court ou aigu), Y = combien. Y est une macro : plusieurs paramètres à la
+  fois, chacun avec sa plage, sa courbe (lin, exp, pow, steps, scale) et la hauteur d'où il entre en jeu (`from`).
+  Mode « coins » pour Cosmos, Reverb rétro et Texture : quatre réglages aux coins, le doigt entre eux (bilinéaire, les
+  valeurs discrètes prises au coin le plus proche). Plages bornées, jamais muet en bas. Les divisions de tempo, les
+  notes et les formes sont des cases aimantées (hystérésis de 3 %), dessinées et nommées sur le pad ; le sens des axes
+  est écrit sur ses bords. Un deuxième doigt sur le pad allume ou éteint HOLD.
+- **Les 26 effets**, par type : Filtre (Filtre Moog, Isolateur, Filtre analogique), Delay (Écho, Delay ping-pong,
+  Boucle granulaire), Reverb (Hall, Nuage diffus, Cosmos, Reverb rétro, Ressort), Modulation (Phaser, Flanger,
+  Ensemble), Distorsion (Overdrive, Waveshaper), Lo-fi, Pitch (Pitch, Tape stop), Granulaire (Texture), Glitch (Beat
+  repeat), Résonateur (Résonateur modal, Modulation croisée, Résonateur), Dynamique (Pompe, Compression).
+- **Moteurs** : Faust et C++ (`fxengine.cpp`), Airwindows (`airwin.cpp`), Surge (`surge.cpp` : sst-effects,
+  sst-filters, sst-waveshapers, et le ressort et l'ensemble de Surge XT), Eurorack (`mi.cpp` : Clouds à 32 kHz, Rings
+  à 48 kHz, rééchantillonnés par `resample.h` ; Warps au rythme du téléphone). Sources tierces dans
+  `native/fx/third_party` (liste, commits et licences : son `README.md`).
+- **Ce qui reste de 0.17-0.20** : le pad dans la zone du milieu sur les deux tiers, type puis nom, send TOUT / ÉMULÉ /
+  FM-1, HOLD, tempo du FM-1 ou TAP, traînes qui continuent après le doigt et au changement d'effet.
+- **Nouveau type d'effet « listen »** (Boucle granulaire, Texture, Beat repeat) : il entend le son en permanence, pour
+  que son tampon soit plein quand le doigt arrive ; doigt posé = gel (Clouds), la sortie s'efface au relâcher.
+- **Tests** (`cargo test`) : les 26 se chargent ; chacun, touché au milieu et aux quatre coins, change le son, reste
+  fini et borné ; courbes, cases avec hystérésis, coins. `examples/fx_bench.rs` : de 0,1 % (Tape stop) à 5,2 %
+  (Ressort) du temps réel sur un cœur de serveur, 8,8 % au pire (un effet joué pendant la traîne du Ressort) ; sur un
+  téléphone, compter 2 à 4 fois plus. Tout le C++ compilé aussi pour ARM64 (NEON, via simde).
+- Écarts au brief : chemin audio existant gardé (pas d'Oboe) ; le Résonateur « Surge » est fait de trois passe-bande
+  sst-filters à la manière du Resonator de Surge, et l'Ensemble reprend le chemin BBD de Surge XT sans ses classes de
+  stockage ; la pression du doigt (option du brief, désactivée par défaut) n'est pas faite.
+
+## v0.20.1 : retour en arrière sur le processeur
+- 0.20 craquait et saturait plus vite. Retiré : la priorité audio demandée pour le fil du moteur (occupé presque tout
+  un cœur, il pouvait passer devant le fil qui donne le son à Android). La session ADPF devient un essai, **coupé par
+  défaut** : Réglages > Machine > Aide du processeur (ADPF). La vitesse des potards reste.
 
 ## v0.20 : vitesse des potards, session ADPF
 - **Réglages > Potards > Vitesse des potards** : ¼×, ½×, 1× ou 2× pour KNOB 1 à 4, ceux de l'écran comme ceux du FM-1

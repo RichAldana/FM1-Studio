@@ -49,6 +49,8 @@ object Native {
     /** the knobs' speed: quarter detents per detent turned (1 = ¼×, 2 = ½×, 4 = 1×, 8 = 2×); [all]: SELECT,
      *  ALGORITHM and PRESETS too, not only KNOB 1-4 */
     external fun setKnobSpeed(quarters: Int, all: Boolean)
+    /** the Android performance hint session (ADPF) for the engine thread, from the next start */
+    external fun setHint(on: Boolean)
     /** An EQ's bands in dB (-12 .. 12): [source] 0 the emulated FM-1, 1 the real one, 2 the master. */
     external fun setEq(source: Int, low: Float, mid: Float, high: Float)
     /** The pad's effects (native/src/fx.rs): the profiles (assets/fx_profiles.json) loaded and every effect made; "" or the error. */

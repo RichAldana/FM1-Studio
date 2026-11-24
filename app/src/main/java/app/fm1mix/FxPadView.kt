@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * The effects the engine has (native/src/fx.rs: the brief's XY engine), and the pad's choices: the effect, what it
@@ -18,37 +19,59 @@ import org.json.JSONArray
  * order and what this build has; the profiles (assets/fx_profiles.json) give the screen its names and the axes'.
  */
 class FxCatalog(json: String, list: String) {
-    class Fx(val index: Int, val id: String, val label: String, val type: String, val xName: String, val yName: String)
+    /** a stepped axis' cells, low to high: their labels (steps, or the notes of a scale) */
+    class Grid(val labels: List<String>)
+    class Fx(val index: Int, val id: String, val label: String, val type: String, val xLabel: String, val yLabel: String,
+             val xGrid: Grid?, val yGrid: Grid?)
 
     val all: List<Fx>
     val types: List<String>
+    /** the profiles' French names (label, category) -> their English ones */
+    private val en = HashMap<String, String>()
+
+    /** the first stepped mapping of an axis (an object or a list of them), as cells */
+    private fun grid(axis: Any?): Grid? {
+        val maps = when (axis) { is JSONArray -> (0 until axis.length()).map { axis.getJSONObject(it) }; is JSONObject -> listOf(axis); else -> emptyList() }
+        val m = maps.firstOrNull { it.optString("curve") == "steps" || it.optString("curve") == "scale" } ?: return null
+        if (m.optString("curve") == "steps") {
+            val named = m.optJSONArray(if (Lang.fr) "stepLabels" else "stepLabelsEn") ?: m.optJSONArray("stepLabels")
+            val steps = named ?: m.optJSONArray("steps") ?: return null
+            return Grid((0 until steps.length()).map { steps.getString(it) })
+        }
+        val sc = m.optJSONArray("scale")
+        val keep = if (sc == null) null else (0 until sc.length()).map { sc.getInt(it) }.toSet()
+        val lo = Math.round(m.optDouble("min", 0.0)).toInt()
+        val hi = Math.round(m.optDouble("max", 12.0)).toInt()
+        val notes = (lo..hi).filter { keep == null || keep.isEmpty() || Math.floorMod(it, 12) in keep }
+        val isNote = m.optString("param") == "note"
+        return Grid(notes.map { if (isNote) PanelView.noteName(it) else if (it > 0) "+$it" else "$it" })
+    }
 
     init {
-        val axes = HashMap<String, Pair<String, String>>()
+        val prof = HashMap<String, JSONObject>()
         runCatching {
             val a = JSONArray(json)
             for (i in 0 until a.length()) {
                 val o = a.getJSONObject(i)
-                axes[o.getString("id")] = Pair(o.optString("xLabel", o.getJSONObject("x").optString("param")),
-                    o.optString("yLabel", o.getJSONObject("y").optString("param")))
+                prof[o.getString("id")] = o
+                for ((k, ke) in listOf("label" to "labelEn", "category" to "categoryEn"))
+                    if (o.has(ke)) en[o.getString(k)] = o.getString(ke)
             }
         }
         all = list.lines().filter { it.isNotBlank() }.mapIndexed { i, line ->
             val p = line.split('\t')
-            val ax = axes[p[0]] ?: Pair("x", "y")
-            Fx(i, p[0], p.getOrElse(1) { p[0] }, p.getOrElse(2) { "" }, ax.first, ax.second)
+            val o = prof[p[0]]
+            fun label(k: String) = o?.optString(if (Lang.fr) k else k + "En", o.optString(k)) ?: ""
+            Fx(i, p[0], p.getOrElse(1) { p[0] }, p.getOrElse(2) { "" }, label("xLabel"), label("yLabel"),
+                runCatching { grid(o?.opt("x")) }.getOrNull(), runCatching { grid(o?.opt("y")) }.getOrNull())
         }
         types = all.map { it.type }.distinct()
     }
 
     fun ofType(t: String) = all.filter { it.type == t }
 
-    companion object {
-        /** the profiles' names (fx_profiles.json, in French) as shown: in English when the phone is not in French */
-        private val EN = mapOf("Filtre Moog" to "Moog filter", "Écho" to "Echo", "Nuage diffus" to "Diffuse cloud",
-            "Pompe" to "Pump", "Filtre" to "Filter", "Distorsion" to "Distortion", "Dynamique" to "Dynamics")
-        fun shown(s: String) = if (Lang.fr) s else EN[s] ?: s
-    }
+    /** a profile's name or category as shown: in English when the phone is not in French */
+    fun shown(s: String) = if (Lang.fr) s else en[s] ?: s
 }
 
 object FxState {
@@ -70,18 +93,16 @@ object FxState {
     }
 
     val TARGETS = arrayOf(tr("TOUT", "ALL"), tr("ÉMULÉ", "EMULATED"), "FM-1")
-    /** the axes' names in the profiles' parameters, for the pad's edges */
-    val NAMES = mapOf("cutoff" to tr("fréquence", "cutoff"), "res" to tr("résonance", "resonance"), "time" to tr("temps", "time"), "feedback" to tr("répétitions", "feedback"),
-        "t60" to tr("durée", "decay time"), "mix" to tr("mélange", "mix"), "size" to tr("taille", "size"), "diffusion" to "diffusion", "speed" to tr("vitesse", "speed"),
-        "depth" to tr("profondeur", "depth"), "drive" to tr("saturation", "drive"), "tone" to tr("tonalité", "tone"), "shift" to tr("hauteur", "pitch"),
-        "fall" to tr("chute", "fall"), "length" to tr("longueur", "length"), "decay" to tr("déclin", "decay"), "thresh" to tr("seuil", "threshold"), "ratio" to "ratio")
 }
 
 /**
  * The effects page (the middle zone only: the largest). Two thirds: the pad, after the Kaoss Pad: the effect plays
- * while a finger is on it (HOLD keeps it), and where the finger is sets it. The third under it: the effect, picked by
- * its type then its name; its send (on everything, on the emulated FM-1, on the real one); HOLD; the tempo it follows
- * (the MIDI clock when one comes, else its own: TAP sets it).
+ * while a finger is on it (HOLD keeps it, and so does a second finger, which toggles HOLD), and where the finger is
+ * sets it, after the live convention: X = what (left dark, slow, long, low; right bright, fast, short, high), Y = how
+ * much. Its axes are written on its edges; a stepped axis (tempo divisions, notes, shapes) shows its cells, named,
+ * the one under the finger lit. The third under it: the effect, picked by its type then its name; its send (on
+ * everything, on the emulated FM-1, on the real one); HOLD; the tempo it follows (the MIDI clock when one comes, else
+ * its own: TAP sets it).
  */
 class FxPadView(ctx: Context) : View(ctx) {
     private val d = ctx.resources.displayMetrics.density
@@ -137,25 +158,18 @@ class FxPadView(ctx: Context) : View(ctx) {
         p.shader = LinearGradient(pad.left, pad.bottom, pad.right, pad.top, 0xFF1C1D21.toInt(), 0xFF30262A.toInt(), Shader.TileMode.CLAMP)
         c.drawRoundRect(pad, 16f * d, 16f * d, p)
         p.shader = null
-        p.color = 0xFF3A3C41.toInt(); p.strokeWidth = 1f * d
-        for (k in 1..3) {
-            val gx = pad.left + pad.width() * k / 4f
-            val gy = pad.top + pad.height() * k / 4f
-            c.drawLine(gx, pad.top + 6f * d, gx, pad.bottom - 6f * d, p)
-            c.drawLine(pad.left + 6f * d, gy, pad.right - 6f * d, gy, p)
-        }
         val cur = cat?.all?.getOrNull(s.selected)
+        drawCells(c, cur?.xGrid, true)
+        drawCells(c, cur?.yGrid, false)
         p.typeface = Typeface.DEFAULT; p.textSize = 11f * d; p.color = 0xFF8E8C87.toInt()
         if (cur != null) {
-            val xn = FxState.NAMES[cur.xName] ?: cur.xName
-            val yn = FxState.NAMES[cur.yName] ?: cur.yName
             p.textAlign = Paint.Align.CENTER
-            c.drawText("$xn →", pad.centerX(), pad.bottom - 8f * d, p)
+            c.drawText(cur.xLabel, pad.centerX(), pad.bottom - 8f * d, p)
             c.save(); c.rotate(-90f, pad.left + 14f * d, pad.centerY())
-            c.drawText("$yn →", pad.left + 14f * d, pad.centerY(), p)
+            c.drawText(cur.yLabel, pad.left + 14f * d, pad.centerY(), p)
             c.restore()
             p.textSize = 13f * d; p.typeface = Typeface.DEFAULT_BOLD; p.color = 0xFFB8B5AE.toInt(); p.textAlign = Paint.Align.LEFT
-            c.drawText(FxCatalog.shown(cur.label), pad.left + 14f * d, pad.top + 22f * d, p)
+            c.drawText(cat?.shown(cur.label) ?: cur.label, pad.left + 14f * d, pad.top + 22f * d, p)
         } else {
             p.textAlign = Paint.Align.CENTER; p.textSize = 13f * d
             c.drawText(tr("Choisis un effet en dessous", "Pick an effect below"), pad.centerX(), pad.centerY(), p)
@@ -179,7 +193,7 @@ class FxPadView(ctx: Context) : View(ctx) {
             // row 1: the types
             c.save(); c.clipRect(0f, rowTop(0), w, rowTop(0) + rh)
             var x = 12f * d - scroll[0]
-            for (t in cat.types) x = chip(c, x, rowTop(0) + (rh - ch) / 2f, ch, FxCatalog.shown(t).uppercase(), t == s.type, true) {
+            for (t in cat.types) x = chip(c, x, rowTop(0) + (rh - ch) / 2f, ch, cat.shown(t).uppercase(), t == s.type, true) {
                 s.type = t
                 val first = cat.ofType(t).firstOrNull()
                 if (cur?.type != t && first != null) s.selected = first.index
@@ -190,7 +204,7 @@ class FxPadView(ctx: Context) : View(ctx) {
             // row 2: the effects of that type
             c.save(); c.clipRect(0f, rowTop(1), w, rowTop(1) + rh)
             x = 12f * d - scroll[1]
-            for (e in cat.ofType(s.type)) x = chip(c, x, rowTop(1) + (rh - ch) / 2f, ch, FxCatalog.shown(e.label), e.index == s.selected, true) {
+            for (e in cat.ofType(s.type)) x = chip(c, x, rowTop(1) + (rh - ch) / 2f, ch, cat.shown(e.label), e.index == s.selected, true) {
                 s.selected = if (s.selected == e.index) -1 else e.index   // (a second tap: no effect)
                 s.onChange?.invoke(); s.send()
             }
@@ -216,6 +230,38 @@ class FxPadView(ctx: Context) : View(ctx) {
         postInvalidateDelayed(if (down) 16 else 250)
     }
 
+    /** an axis' lines: a stepped axis' cells (named, the finger's lit), else quarters, faint */
+    private fun drawCells(c: Canvas, g: FxCatalog.Grid?, isX: Boolean) {
+        val len = if (isX) pad.width() else pad.height()
+        val n = g?.labels?.size ?: 4
+        val at = if (isX) fx else fy
+        p.strokeWidth = 1f * d
+        if (g != null && (down || FxState.hold)) {
+            // the cell under the finger (the engine keeps it a little past its edges)
+            val k = (at * n).toInt().coerceIn(0, n - 1)
+            p.color = 0x22F29B38
+            if (isX) c.drawRect(pad.left + len * k / n, pad.top, pad.left + len * (k + 1) / n, pad.bottom, p)
+            else c.drawRect(pad.left, pad.bottom - len * (k + 1) / n, pad.right, pad.bottom - len * k / n, p)
+        }
+        p.color = if (g != null) 0xFF4A4C52.toInt() else 0xFF3A3C41.toInt()
+        for (k in 1 until n) {
+            val v = len * k / n
+            if (isX) c.drawLine(pad.left + v, pad.top + 6f * d, pad.left + v, pad.bottom - 6f * d, p)
+            else c.drawLine(pad.left + 6f * d, pad.bottom - v, pad.right - 6f * d, pad.bottom - v, p)
+        }
+        if (g == null) return
+        // the names, as many as fit
+        p.textSize = 10f * d; p.typeface = Typeface.DEFAULT; p.textAlign = Paint.Align.CENTER; p.color = 0xFF9A978F.toInt()
+        val cell = len / n
+        val widest = g.labels.maxOf { p.measureText(it) } + 6f * d
+        val every = if (isX) maxOf(1, Math.ceil((widest / cell).toDouble()).toInt()) else maxOf(1, Math.ceil((14f * d / cell).toDouble()).toInt())
+        for (k in g.labels.indices step every) {
+            val mid = cell * (k + 0.5f)
+            if (isX) c.drawText(g.labels[k], pad.left + mid, pad.bottom - 22f * d, p)
+            else { p.textAlign = Paint.Align.RIGHT; c.drawText(g.labels[k], pad.right - 8f * d, pad.bottom - mid + 4f * d, p) }
+        }
+    }
+
     private fun setFrom(ex: Float, ey: Float) {
         fx = ((ex - pad.left) / pad.width()).coerceIn(0f, 1f)
         fy = ((pad.bottom - ey) / pad.height()).coerceIn(0f, 1f)
@@ -238,6 +284,15 @@ class FxPadView(ctx: Context) : View(ctx) {
                     dragMoved = false
                 }
             }
+            MotionEvent.ACTION_POINTER_DOWN -> if (finger >= 0 && FxState.catalog != null) {
+                // a second finger on the pad while one plays: HOLD on or off
+                val i = e.actionIndex
+                if (pad.contains(e.getX(i), e.getY(i))) {
+                    FxState.hold = !FxState.hold
+                    FxState.onChange?.invoke(); FxState.send()
+                    performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                }
+            }
             MotionEvent.ACTION_MOVE -> if (finger >= 0) {
                 val i = e.findPointerIndex(finger)
                 if (i >= 0) { setFrom(e.getX(i), e.getY(i)); Native.fxTouch(fx, fy, true) }
@@ -245,6 +300,11 @@ class FxPadView(ctx: Context) : View(ctx) {
                 val dx = e.x - dragX
                 if (kotlin.math.abs(dx) > 8f * d) dragMoved = true
                 if (dragMoved) { scroll[dragRow] = (scroll[dragRow] - dx).coerceIn(0f, 2000f * d); dragX = e.x; invalidate() }
+            }
+            MotionEvent.ACTION_POINTER_UP -> if (finger >= 0 && e.getPointerId(e.actionIndex) == finger) {
+                // the first finger lifts while the second stays: the second takes the pad over
+                val j = (0 until e.pointerCount).firstOrNull { e.getPointerId(it) != finger }
+                if (j != null) { finger = e.getPointerId(j); setFrom(e.getX(j), e.getY(j)); Native.fxTouch(fx, fy, true) }
             }
             MotionEvent.ACTION_UP -> {
                 if (finger >= 0) {

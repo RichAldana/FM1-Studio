@@ -1,17 +1,17 @@
 # Sujets en suspens
 
-Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernière mise à jour : 0.20).
+Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernière mise à jour : 0.21).
 
 ## Effets (pad XY)
-- **Régler la sensibilité des axes** X et Y, effet par effet (courbes, plages), après essais sur le téléphone.
+- Fait en 0.21 : la nouvelle convention (X = quoi, Y = combien en macro, coins, cases aimantées et nommées, étiquettes,
+  deuxième doigt = HOLD) et les 26 effets du brief.
+- **À régler à l'oreille, sur le téléphone** : les plages de chaque profil (`assets/fx_profiles.json`, sans recompiler)
+  et la sensibilité des axes.
 - **Retour à l'origine** quand on lève le doigt ou qu'on sort de HOLD : progressif ou immédiat, au choix (par effet,
-  ou en réglage général). Aujourd'hui : chaque profil a son geste (`return`, `hold`, `action`) et sa descente fixe.
-- **Les 15 effets restants du brief** (11 faits sur 26) :
-  - Airwindows (5) : Isolator3, kCosmos, CrunchCoat, DeRez2, BeziComp ;
-  - Surge, sst-effects / sst-filters (6), en vérifiant ARM64 et SIMD ;
-  - inspirés d'Eurorack (4) : Texture, Boucle granulaire, Résonateur modal, Modulation croisée (jamais le nom
-    d'origine dans l'app, crédit seulement dans les licences).
-- Options du brief : écran de debug (latence, CPU).
+  ou en réglage général). Aujourd'hui : chaque profil a son geste (`return`, `hold`, `action`) et ses temps.
+- **Boucle granulaire et Texture** : doigt posé = gel. À essayer en jeu ; si c'est trop radical, le gel pourrait
+  n'arriver qu'après un appui long, ou passer par HOLD.
+- Options du brief non faites : la pression du doigt sur Y, l'écran de debug (latence, CPU par effet), Ableton Link.
 
 ## Sensibilité des potards (encodeurs) : toujours un problème
 - Constat : des sauts de valeur restent, au doigt sur l'écran comme depuis le FM-1 (PANEL MIDI).
@@ -29,6 +29,35 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
   précédent) au lieu de 9 ms ; (2) à l'écran, revoir la distance par cran (22 unités aujourd'hui) ; (3) mesurer avec Chordism et 2 ou 3 autres
   firmwares (tests `enc_bursts.rs`) avant de choisir.
 
+## Plusieurs sources audio USB (plusieurs FM-1, d'autres machines)
+- Le but : brancher plus d'un FM-1, ou d'autres machines audio USB (une autre groovebox, une carte son, un synthé
+  « class compliant »), par un hub USB-C, et que **tous jouent en même temps** : chacun sur sa tranche du mixeur,
+  avec l'émulé, au même tempo, mixés, enregistrés et envoyés aux effets ensemble.
+- Jouer ensemble demande en plus :
+  - **un seul tempo** : une horloge maître (un des FM-1, ou l'app) relayée en MIDI vers tous les autres et vers
+    l'émulé, Start et Stop compris, pour que tout parte et tombe ensemble ;
+  - **l'alignement** : chaque appareil arrive avec son propre retard USB ; un décalage par source (mesuré ou réglé,
+    comme « Alignement des deux FM-1 » aujourd'hui) pour que les temps tombent ensemble dans le mix ;
+  - **la lecture en parallèle** : toutes les sources lues en continu, sans que l'une en attende une autre (un lecteur
+    par appareil dans le pilote intégré), et une dérive corrigée pour chacune.
+- Faisable, mais pas par le chemin d'Android : Android n'ouvre qu'un appareil audio USB à la fois. Par le pilote
+  intégré de l'app (`UsbAudioIn` + `native/src/usbin.rs`, qui lit déjà le FM-1 en direct), chaque appareil peut être
+  ouvert à part : un lecteur par appareil.
+- À faire :
+  1. **la reconnaissance** : identifier chaque appareil (fabricant, nom, numéro de série USB quand il en a un, sinon le
+     port du hub), lui donner un nom (« FM-1 A », « FM-1 B », « Volca »…) et retenir ses réglages (volume, EQ, balance,
+     coupé) d'une fois sur l'autre ; dire ce qu'il sait faire (entrée, sortie, MIDI, nombre de canaux, fréquences) ;
+  2. **le moteur** : une file par source, chacune avec sa correction de dérive (chaque appareil a sa propre horloge),
+     son EQ et son vumètre ; le mix et l'enregistrement « Deux pistes » deviennent N pistes ;
+  3. **le mixeur** : une tranche par source branchée, qui apparaît et disparaît avec elle (le mixeur défile s'il y en
+     a trop) ; le send des effets choisit parmi toutes ;
+  4. **le MIDI** : chaque appareil a son port ; l'horloge vient d'un maître choisi ; PANEL MIDI : lequel des LOOM-8
+     prête son panneau ;
+  5. **la sortie** : « sur le FM-1 » devient « sur l'appareil choisi ».
+- Limites à vérifier : le courant (un hub alimenté si plusieurs appareils tirent sur le téléphone), la bande passante
+  USB (les FM-1 sont en « full speed » : plusieurs passent sur un hub, à mesurer), la charge du processeur, et les
+  appareils qui ne sont pas « class compliant » (pilote propriétaire : impossibles).
+
 ## Optimisation du processeur (réflexion)
 - Où on en est : l'émulateur tourne avec son JIT ARM64 (activé sur Android dans la version de fm1-emu utilisée),
   l'horloge suit le minimum mesuré de chaque firmware ; la charge affichée tourne autour de 77-82 % avec Chordism.
@@ -37,7 +66,8 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
     gros cœur : de 72-93 % à environ 50 % de charge sur un firmware lourd, sans craquement ;
   - une version « release » (non debuggable) : le fil de l'interface tombe de environ un tiers de cœur à moins de 10 % ;
   - ne pas retenir une baisse d'horloge décidée quand l'app est en arrière-plan.
-- Fait en 0.20 : la session ADPF et la priorité audio sur le fil du moteur (à mesurer sur ton téléphone).
+- 0.20 : la session ADPF et la priorité audio ont fait craquer et saturer plus vite. 0.20.1 retire la priorité ; l'ADPF
+  devient un essai coupé par défaut (Réglages > Machine). À mesurer : avec et sans, et si besoin chercher ailleurs.
 - Pour FM1 Mix, ensuite : (1) construire en release (en attente : d'autres modifications d'abord) ; (2) mesurer qui coûte quoi (moteur, capture USB et
   rééchantillonnage, effets, dessin de l'écran à 30 images/s) ; (3) dessiner moins souvent ce qui ne bouge pas.
 - Plus loin : RemoteFM1 fait tourner beaucoup de firmwares recompilés pour l'hôte (`.rfm1`, en WebAssembly, et des

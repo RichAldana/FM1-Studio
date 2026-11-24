@@ -30,7 +30,7 @@ import java.security.MessageDigest
  * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
 /** shown in About and in error reports; keep in step with versionName (app/build.gradle.kts) */
-const val APP_VERSION = "0.20"
+const val APP_VERSION = "0.21"
 
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView
@@ -562,6 +562,7 @@ class MainActivity : ComponentActivity() {
         muted[0] = fwInt("muteEmu", 0) == 1
         octave = fwInt("oct", 0)
         applyKnobSpeed()
+        Native.setHint(prefs.getBoolean("adpf", false))
         if (::keysPanel.isInitialized) showOctave()
         balEmuPct = fwInt("balEmu", 0)
         for (i in 0 until 3) eqDb[i] = fwInt("eq$i", 0)
@@ -1062,6 +1063,11 @@ class MainActivity : ComponentActivity() {
             nav(tr("Notes sur les touches", "Notes on the keys"), NOTE_NAMES[noteNames()]) { sh.push(tr("Clavier", "Keyboard")) { keyboardPage() } }
             group("Machine")
             nav(tr("Horloge", "Clock"), clockName()) { sh.push(tr("Horloge", "Clock")) { clockPage() } }
+            toggle(tr("Aide du processeur (ADPF)", "CPU help (ADPF)"),
+                tr("Essai : Android 13 et plus. Si le son craque davantage, laisse-la coupée", "A trial: Android 13 and later. If the sound crackles more, leave it off"),
+                prefs.getBoolean("adpf", false)) {
+                prefs.edit().putBoolean("adpf", it).apply(); Native.setHint(it); restart()
+            }
             toggle(tr("Puce flash récente", "Recent flash chip"), tr("UC25HQ80, des FM-1 récents", "UC25HQ80, on recent FM-1s"), newChip) {
                 newChip = it; prefs.edit().putBoolean("newChip", it).apply(); restart()
             }
@@ -1234,8 +1240,7 @@ class MainActivity : ComponentActivity() {
     private fun Sheet.Page.diagnosticPage() {
         val diag = Diagnostic.report(this@MainActivity) + tr("\nCapture : ", "\nCapture: ") + audio.captureStatus() + "\n" + audio.usbReport() +
             tr("\nMoteur : ", "\nEngine: ") + (if (running) Native.status() else tr("éteint", "off")) +
-            tr(" (ADPF : session d'indication de performance Android sur le fil du moteur, Android 13 et plus)",
-               " (ADPF: Android performance hint session on the engine thread, Android 13 and later)")
+            tr(" (« ADPF » à la fin : l'aide du processeur tourne)", " (\"ADPF\" at the end: the CPU help is running)")
         group()
         action(tr("Copier le diagnostic", "Copy the diagnostic")) {
             val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -1260,11 +1265,21 @@ class MainActivity : ComponentActivity() {
         info(tr("Écho, Pitch, lissages", "Echo, Pitch, smoothing"), tr("LGPL avec exception Faust · GRAME", "LGPL with the Faust exception · GRAME"))
         info(tr("Nuage diffus", "Diffuse cloud"), "GPL-2.0+ · Julian Parker, Till Bovermann")
         info(tr("Tape stop, Beat repeat, moteur du pad", "Tape stop, Beat repeat, pad engine"), "GPL-3.0 · FM1 Mix")
+        info(tr("Isolateur, Cosmos, Reverb rétro, Lo-fi, Compression", "Isolator, Cosmos, Retro reverb, Lo-fi, Compression"),
+            "MIT · Chris Johnson (Airwindows), Paul Walker (airwin2rack)")
+        info(tr("Filtre analogique, Delay ping-pong, Ressort, Ensemble, Waveshaper, Résonateur", "Analog filter, Ping-pong delay, Spring, Ensemble, Waveshaper, Resonator"),
+            "GPL-3.0+ · Surge Synth Team (sst-effects, sst-filters, sst-waveshapers, sst-basic-blocks, Surge XT)")
+        info(tr("Boucle granulaire, Texture, Résonateur modal, Modulation croisée", "Granular loop, Texture, Modal resonator, Cross modulation"),
+            tr("MIT · Emilie Gillet (Mutable Instruments : Clouds, Rings, Warps ; stmlib)", "MIT · Emilie Gillet (Mutable Instruments: Clouds, Rings, Warps; stmlib)"))
+        info("SIMD Everywhere, {fmt}", "MIT")
         nav(tr("Code de fm1-emu", "fm1-emu's code")) { open("https://github.com/joakimeriksson/fm1-emu") }
         nav("SLOOP") { open("https://github.com/isod89/sloop-fm1") }
         nav("The Firmware Hub") { open(FirmwareCatalog.HUB) }
         nav("Faust") { open("https://faust.grame.fr") }
         nav(tr("Bibliothèques Faust", "Faust libraries")) { open("https://github.com/grame-cncm/faustlibraries") }
+        nav("Airwindows") { open("https://github.com/airwindows/airwindows") }
+        nav("Surge Synth Team") { open("https://github.com/surge-synthesizer") }
+        nav("eurorack (Emilie Gillet)") { open("https://github.com/pichenettes/eurorack") }
         note(tr("Chaque firmware reste sous la licence de son auteur (sa page dans le catalogue).", "Each firmware stays under its author's licence (its page in the catalogue)."))
     }
 
