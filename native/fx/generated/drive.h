@@ -46,8 +46,8 @@ class DriveDsp final : public FaustDsp {
 	float fRec0[2];
 	float fConst3;
 	FAUSTFLOAT fHslider1;
-	float fRec2[2];
-	float fRec1[3];
+	float fRec1[2];
+	float fRec2[3];
 	float fRec3[3];
 	
  public:
@@ -125,10 +125,10 @@ class DriveDsp final : public FaustDsp {
 			fRec0[l0] = 0.0f;
 		}
 		for (int l1 = 0; l1 < 2; l1 = l1 + 1) {
-			fRec2[l1] = 0.0f;
+			fRec1[l1] = 0.0f;
 		}
 		for (int l2 = 0; l2 < 3; l2 = l2 + 1) {
-			fRec1[l2] = 0.0f;
+			fRec2[l2] = 0.0f;
 		}
 		for (int l3 = 0; l3 < 3; l3 = l3 + 1) {
 			fRec3[l3] = 0.0f;
@@ -157,7 +157,7 @@ class DriveDsp final : public FaustDsp {
 	void buildUserInterface(UI* ui_interface) {
 		ui_interface->openVerticalBox("drive");
 		ui_interface->addHorizontalSlider("drive", &fHslider1, FAUSTFLOAT(0.3f), FAUSTFLOAT(0.0f), FAUSTFLOAT(1.0f), FAUSTFLOAT(0.001f));
-		ui_interface->addHorizontalSlider("tone", &fHslider0, FAUSTFLOAT(6e+03f), FAUSTFLOAT(5e+02f), FAUSTFLOAT(1.2e+04f), FAUSTFLOAT(1.0f));
+		ui_interface->addHorizontalSlider("tone", &fHslider0, FAUSTFLOAT(6e+03f), FAUSTFLOAT(5e+02f), FAUSTFLOAT(1.6e+04f), FAUSTFLOAT(1.0f));
 		ui_interface->closeBox();
 	}
 	
@@ -170,23 +170,26 @@ class DriveDsp final : public FaustDsp {
 		float fSlow1 = fConst1 * float(fHslider1);
 		for (int i0 = 0; i0 < count; i0 = i0 + 1) {
 			fRec0[0] = fSlow0 + fConst2 * fRec0[1];
-			float fTemp0 = std::tan(fConst3 * std::min<float>(1.2e+04f, std::max<float>(5e+02f, fRec0[0])));
+			float fTemp0 = std::tan(fConst3 * std::min<float>(1.6e+04f, std::max<float>(5e+02f, fRec0[0])));
 			float fTemp1 = 1.0f / fTemp0;
 			float fTemp2 = (fTemp1 + 1.4142135f) / fTemp0 + 1.0f;
-			float fTemp3 = 1.0f - 1.0f / DriveDsp_faustpower2_f(fTemp0);
-			float fTemp4 = (fTemp1 + -1.4142135f) / fTemp0 + 1.0f;
-			fRec2[0] = fSlow1 + fConst2 * fRec2[1];
-			float fTemp5 = std::pow(1e+01f, 2.0f * std::min<float>(1.0f, std::max<float>(0.0f, fRec2[0])));
-			float fTemp6 = std::max<float>(-1.0f, std::min<float>(1.0f, float(input0[i0]) * fTemp5));
-			fRec1[0] = fTemp6 * (1.0f - 0.33333334f * DriveDsp_faustpower2_f(fTemp6)) - (fRec1[2] * fTemp4 + 2.0f * fRec1[1] * fTemp3) / fTemp2;
-			output0[i0] = FAUSTFLOAT(1.4f * ((fRec1[2] + fRec1[0] + 2.0f * fRec1[1]) / fTemp2));
-			float fTemp7 = std::max<float>(-1.0f, std::min<float>(1.0f, float(input1[i0]) * fTemp5));
-			fRec3[0] = fTemp7 * (1.0f - 0.33333334f * DriveDsp_faustpower2_f(fTemp7)) - (fTemp4 * fRec3[2] + 2.0f * fTemp3 * fRec3[1]) / fTemp2;
-			output1[i0] = FAUSTFLOAT(1.4f * ((fRec3[2] + fRec3[0] + 2.0f * fRec3[1]) / fTemp2));
+			fRec1[0] = fSlow1 + fConst2 * fRec1[1];
+			float fTemp3 = std::min<float>(1.0f, std::max<float>(0.0f, fRec1[0]));
+			float fTemp4 = std::pow(1e+01f, 2.0f * fTemp3);
+			float fTemp5 = std::sqrt(fTemp4) * fTemp2;
+			float fTemp6 = 0.5f * fTemp3 + 1.0f;
+			float fTemp7 = 1.0f - 1.0f / DriveDsp_faustpower2_f(fTemp0);
+			float fTemp8 = (fTemp1 + -1.4142135f) / fTemp0 + 1.0f;
+			float fTemp9 = std::max<float>(-1.0f, std::min<float>(1.0f, float(input0[i0]) * fTemp4));
+			fRec2[0] = fTemp9 * (1.0f - 0.33333334f * DriveDsp_faustpower2_f(fTemp9)) - (fRec2[2] * fTemp8 + 2.0f * fRec2[1] * fTemp7) / fTemp2;
+			output0[i0] = FAUSTFLOAT((fRec2[2] + fRec2[0] + 2.0f * fRec2[1]) * fTemp6 / fTemp5);
+			float fTemp10 = std::max<float>(-1.0f, std::min<float>(1.0f, float(input1[i0]) * fTemp4));
+			fRec3[0] = fTemp10 * (1.0f - 0.33333334f * DriveDsp_faustpower2_f(fTemp10)) - (fTemp8 * fRec3[2] + 2.0f * fTemp7 * fRec3[1]) / fTemp2;
+			output1[i0] = FAUSTFLOAT(fTemp6 * (fRec3[2] + fRec3[0] + 2.0f * fRec3[1]) / fTemp5);
 			fRec0[1] = fRec0[0];
-			fRec2[1] = fRec2[0];
-			fRec1[2] = fRec1[1];
 			fRec1[1] = fRec1[0];
+			fRec2[2] = fRec2[1];
+			fRec2[1] = fRec2[0];
 			fRec3[2] = fRec3[1];
 			fRec3[1] = fRec3[0];
 		}

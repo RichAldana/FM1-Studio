@@ -56,16 +56,18 @@ class PhaserDsp final : public FaustDsp {
 	float fConst7;
 	float fConst9;
 	float fConst10;
+	FAUSTFLOAT fHslider2;
+	float fRec9[2];
 	float fRec8[3];
 	float fRec7[3];
 	float fRec6[3];
 	float fRec5[3];
 	float fRec1[2];
+	float fRec14[3];
 	float fRec13[3];
 	float fRec12[3];
 	float fRec11[3];
-	float fRec10[3];
-	float fRec9[2];
+	float fRec10[2];
 	
  public:
 	PhaserDsp() {}
@@ -138,6 +140,7 @@ class PhaserDsp final : public FaustDsp {
 	void instanceResetUserInterface() {
 		fHslider0 = FAUSTFLOAT(1.0f);
 		fHslider1 = FAUSTFLOAT(0.5f);
+		fHslider2 = FAUSTFLOAT(0.3f);
 	}
 	
 	void instanceClear() {
@@ -156,35 +159,38 @@ class PhaserDsp final : public FaustDsp {
 		for (int l4 = 0; l4 < 2; l4 = l4 + 1) {
 			fRec3[l4] = 0.0f;
 		}
-		for (int l5 = 0; l5 < 3; l5 = l5 + 1) {
-			fRec8[l5] = 0.0f;
+		for (int l5 = 0; l5 < 2; l5 = l5 + 1) {
+			fRec9[l5] = 0.0f;
 		}
 		for (int l6 = 0; l6 < 3; l6 = l6 + 1) {
-			fRec7[l6] = 0.0f;
+			fRec8[l6] = 0.0f;
 		}
 		for (int l7 = 0; l7 < 3; l7 = l7 + 1) {
-			fRec6[l7] = 0.0f;
+			fRec7[l7] = 0.0f;
 		}
 		for (int l8 = 0; l8 < 3; l8 = l8 + 1) {
-			fRec5[l8] = 0.0f;
+			fRec6[l8] = 0.0f;
 		}
-		for (int l9 = 0; l9 < 2; l9 = l9 + 1) {
-			fRec1[l9] = 0.0f;
+		for (int l9 = 0; l9 < 3; l9 = l9 + 1) {
+			fRec5[l9] = 0.0f;
 		}
-		for (int l10 = 0; l10 < 3; l10 = l10 + 1) {
-			fRec13[l10] = 0.0f;
+		for (int l10 = 0; l10 < 2; l10 = l10 + 1) {
+			fRec1[l10] = 0.0f;
 		}
 		for (int l11 = 0; l11 < 3; l11 = l11 + 1) {
-			fRec12[l11] = 0.0f;
+			fRec14[l11] = 0.0f;
 		}
 		for (int l12 = 0; l12 < 3; l12 = l12 + 1) {
-			fRec11[l12] = 0.0f;
+			fRec13[l12] = 0.0f;
 		}
 		for (int l13 = 0; l13 < 3; l13 = l13 + 1) {
-			fRec10[l13] = 0.0f;
+			fRec12[l13] = 0.0f;
 		}
-		for (int l14 = 0; l14 < 2; l14 = l14 + 1) {
-			fRec9[l14] = 0.0f;
+		for (int l14 = 0; l14 < 3; l14 = l14 + 1) {
+			fRec11[l14] = 0.0f;
+		}
+		for (int l15 = 0; l15 < 2; l15 = l15 + 1) {
+			fRec10[l15] = 0.0f;
 		}
 	}
 	
@@ -210,6 +216,7 @@ class PhaserDsp final : public FaustDsp {
 	void buildUserInterface(UI* ui_interface) {
 		ui_interface->openVerticalBox("phaser");
 		ui_interface->addHorizontalSlider("depth", &fHslider0, FAUSTFLOAT(1.0f), FAUSTFLOAT(0.0f), FAUSTFLOAT(1.0f), FAUSTFLOAT(0.001f));
+		ui_interface->addHorizontalSlider("feedback", &fHslider2, FAUSTFLOAT(0.3f), FAUSTFLOAT(0.0f), FAUSTFLOAT(0.9f), FAUSTFLOAT(0.001f));
 		ui_interface->addHorizontalSlider("speed", &fHslider1, FAUSTFLOAT(0.5f), FAUSTFLOAT(0.05f), FAUSTFLOAT(8.0f), FAUSTFLOAT(0.001f));
 		ui_interface->closeBox();
 	}
@@ -221,6 +228,7 @@ class PhaserDsp final : public FaustDsp {
 		FAUSTFLOAT* output1 = outputs[1];
 		float fSlow0 = fConst1 * float(fHslider0);
 		float fSlow1 = fConst1 * float(fHslider1);
+		float fSlow2 = fConst1 * float(fHslider2);
 		for (int i0 = 0; i0 < count; i0 = i0 + 1) {
 			iVec0[0] = 1;
 			fRec0[0] = fSlow0 + fConst2 * fRec0[1];
@@ -236,31 +244,34 @@ class PhaserDsp final : public FaustDsp {
 			float fTemp6 = fRec6[1] * std::cos(fConst5 * fTemp4);
 			float fTemp7 = fRec7[1] * std::cos(fConst6 * fTemp4);
 			float fTemp8 = fRec8[1] * std::cos(fConst7 * fTemp4);
-			float fTemp9 = float(input0[i0]);
-			fRec8[0] = fTemp9 + 0.5f * fRec1[1] + fConst10 * fTemp8 - fConst9 * fRec8[2];
+			fRec9[0] = fSlow2 + fConst2 * fRec9[1];
+			float fTemp9 = std::min<float>(0.9f, std::max<float>(0.0f, fRec9[0]));
+			float fTemp10 = float(input0[i0]);
+			fRec8[0] = fTemp10 + fTemp9 * fRec1[1] + fConst10 * fTemp8 - fConst9 * fRec8[2];
 			fRec7[0] = fRec8[2] + fConst9 * (fRec8[0] - fRec7[2]) - fConst10 * (fTemp8 - fTemp7);
 			fRec6[0] = fRec7[2] + fConst9 * (fRec7[0] - fRec6[2]) - fConst10 * (fTemp7 - fTemp6);
 			fRec5[0] = fRec6[2] + fConst9 * (fRec6[0] - fRec5[2]) - fConst10 * (fTemp6 - fTemp5);
 			fRec1[0] = fRec5[2] + fConst9 * fRec5[0] - fConst10 * fTemp5;
-			float fTemp10 = 1.0f - 0.5f * fTemp0;
-			output0[i0] = FAUSTFLOAT(fTemp9 * fTemp10 + 0.5f * fRec1[0] * fTemp0);
-			float fTemp11 = 2199.1147f * (1.0f - fRec3[0]) + 628.31854f;
-			float fTemp12 = fRec10[1] * std::cos(fConst4 * fTemp11);
-			float fTemp13 = fRec11[1] * std::cos(fConst5 * fTemp11);
-			float fTemp14 = fRec12[1] * std::cos(fConst6 * fTemp11);
-			float fTemp15 = fRec13[1] * std::cos(fConst7 * fTemp11);
-			float fTemp16 = float(input1[i0]);
-			fRec13[0] = fTemp16 + 0.5f * fRec9[1] + fConst10 * fTemp15 - fConst9 * fRec13[2];
+			float fTemp11 = 1.0f - 0.5f * fTemp0;
+			output0[i0] = FAUSTFLOAT(fTemp10 * fTemp11 + 0.5f * fRec1[0] * fTemp0);
+			float fTemp12 = 2199.1147f * (1.0f - fRec3[0]) + 628.31854f;
+			float fTemp13 = fRec11[1] * std::cos(fConst4 * fTemp12);
+			float fTemp14 = fRec12[1] * std::cos(fConst5 * fTemp12);
+			float fTemp15 = fRec13[1] * std::cos(fConst6 * fTemp12);
+			float fTemp16 = fRec14[1] * std::cos(fConst7 * fTemp12);
+			float fTemp17 = float(input1[i0]);
+			fRec14[0] = fTemp17 + fTemp9 * fRec10[1] + fConst10 * fTemp16 - fConst9 * fRec14[2];
+			fRec13[0] = fRec14[2] + fConst9 * (fRec14[0] - fRec13[2]) - fConst10 * (fTemp16 - fTemp15);
 			fRec12[0] = fRec13[2] + fConst9 * (fRec13[0] - fRec12[2]) - fConst10 * (fTemp15 - fTemp14);
 			fRec11[0] = fRec12[2] + fConst9 * (fRec12[0] - fRec11[2]) - fConst10 * (fTemp14 - fTemp13);
-			fRec10[0] = fRec11[2] + fConst9 * (fRec11[0] - fRec10[2]) - fConst10 * (fTemp13 - fTemp12);
-			fRec9[0] = fRec10[2] + fConst9 * fRec10[0] - fConst10 * fTemp12;
-			output1[i0] = FAUSTFLOAT(fTemp16 * fTemp10 + 0.5f * fRec9[0] * fTemp0);
+			fRec10[0] = fRec11[2] + fConst9 * fRec11[0] - fConst10 * fTemp13;
+			output1[i0] = FAUSTFLOAT(fTemp17 * fTemp11 + 0.5f * fRec10[0] * fTemp0);
 			iVec0[1] = iVec0[0];
 			fRec0[1] = fRec0[0];
 			fRec4[1] = fRec4[0];
 			fRec2[1] = fRec2[0];
 			fRec3[1] = fRec3[0];
+			fRec9[1] = fRec9[0];
 			fRec8[2] = fRec8[1];
 			fRec8[1] = fRec8[0];
 			fRec7[2] = fRec7[1];
@@ -270,15 +281,15 @@ class PhaserDsp final : public FaustDsp {
 			fRec5[2] = fRec5[1];
 			fRec5[1] = fRec5[0];
 			fRec1[1] = fRec1[0];
+			fRec14[2] = fRec14[1];
+			fRec14[1] = fRec14[0];
 			fRec13[2] = fRec13[1];
 			fRec13[1] = fRec13[0];
 			fRec12[2] = fRec12[1];
 			fRec12[1] = fRec12[0];
 			fRec11[2] = fRec11[1];
 			fRec11[1] = fRec11[0];
-			fRec10[2] = fRec10[1];
 			fRec10[1] = fRec10[0];
-			fRec9[1] = fRec9[0];
 		}
 	}
 

@@ -36,7 +36,7 @@ class FlangerDspSIG0 {
   private:
 	
 	int iVec2[2];
-	int iRec2[2];
+	int iRec3[2];
 	
   public:
 	
@@ -48,21 +48,21 @@ class FlangerDspSIG0 {
 	}
 	
 	void instanceInitFlangerDspSIG0(int sample_rate) {
-		for (int l3 = 0; l3 < 2; l3 = l3 + 1) {
-			iVec2[l3] = 0;
-		}
 		for (int l4 = 0; l4 < 2; l4 = l4 + 1) {
-			iRec2[l4] = 0;
+			iVec2[l4] = 0;
+		}
+		for (int l5 = 0; l5 < 2; l5 = l5 + 1) {
+			iRec3[l5] = 0;
 		}
 	}
 	
 	void fillFlangerDspSIG0(int count, float* table) {
 		for (int i1 = 0; i1 < count; i1 = i1 + 1) {
 			iVec2[0] = 1;
-			iRec2[0] = (iVec2[1] + iRec2[1]) % 65536;
-			table[i1] = std::sin(9.58738e-05f * float(iRec2[0]));
+			iRec3[0] = (iVec2[1] + iRec3[1]) % 65536;
+			table[i1] = std::sin(9.58738e-05f * float(iRec3[0]));
 			iVec2[1] = iVec2[0];
-			iRec2[1] = iRec2[0];
+			iRec3[1] = iRec3[0];
 		}
 	}
 
@@ -76,7 +76,7 @@ class FlangerDspSIG1 {
   private:
 	
 	int iVec4[2];
-	int iRec6[2];
+	int iRec7[2];
 	
   public:
 	
@@ -88,21 +88,21 @@ class FlangerDspSIG1 {
 	}
 	
 	void instanceInitFlangerDspSIG1(int sample_rate) {
-		for (int l9 = 0; l9 < 2; l9 = l9 + 1) {
-			iVec4[l9] = 0;
-		}
 		for (int l10 = 0; l10 < 2; l10 = l10 + 1) {
-			iRec6[l10] = 0;
+			iVec4[l10] = 0;
+		}
+		for (int l11 = 0; l11 < 2; l11 = l11 + 1) {
+			iRec7[l11] = 0;
 		}
 	}
 	
 	void fillFlangerDspSIG1(int count, float* table) {
 		for (int i2 = 0; i2 < count; i2 = i2 + 1) {
 			iVec4[0] = 1;
-			iRec6[0] = (iVec4[1] + iRec6[1]) % 65536;
-			table[i2] = std::cos(9.58738e-05f * float(iRec6[0]));
+			iRec7[0] = (iVec4[1] + iRec7[1]) % 65536;
+			table[i2] = std::cos(9.58738e-05f * float(iRec7[0]));
 			iVec4[1] = iVec4[0];
-			iRec6[1] = iRec6[0];
+			iRec7[1] = iRec7[0];
 		}
 	}
 
@@ -123,16 +123,18 @@ class FlangerDsp final : public FaustDsp {
 	float fConst1;
 	float fConst2;
 	FAUSTFLOAT fHslider0;
-	float fRec1[2];
+	float fRec0[2];
+	FAUSTFLOAT fHslider1;
+	float fRec2[2];
 	int IOTA0;
 	float fVec1[512];
-	FAUSTFLOAT fHslider1;
-	float fRec4[2];
-	float fConst3;
-	float fRec3[2];
-	float fRec0[2];
-	float fVec3[512];
+	FAUSTFLOAT fHslider2;
 	float fRec5[2];
+	float fConst3;
+	float fRec4[2];
+	float fRec1[2];
+	float fVec3[512];
+	float fRec6[2];
 	
  public:
 	FlangerDsp() {}
@@ -194,8 +196,9 @@ class FlangerDsp final : public FaustDsp {
 	}
 	
 	void instanceResetUserInterface() {
-		fHslider0 = FAUSTFLOAT(0.5f);
-		fHslider1 = FAUSTFLOAT(0.3f);
+		fHslider0 = FAUSTFLOAT(1.0f);
+		fHslider1 = FAUSTFLOAT(0.5f);
+		fHslider2 = FAUSTFLOAT(0.3f);
 	}
 	
 	void instanceClear() {
@@ -203,26 +206,29 @@ class FlangerDsp final : public FaustDsp {
 			iVec0[l0] = 0;
 		}
 		for (int l1 = 0; l1 < 2; l1 = l1 + 1) {
-			fRec1[l1] = 0.0f;
+			fRec0[l1] = 0.0f;
+		}
+		for (int l2 = 0; l2 < 2; l2 = l2 + 1) {
+			fRec2[l2] = 0.0f;
 		}
 		IOTA0 = 0;
-		for (int l2 = 0; l2 < 512; l2 = l2 + 1) {
-			fVec1[l2] = 0.0f;
-		}
-		for (int l5 = 0; l5 < 2; l5 = l5 + 1) {
-			fRec4[l5] = 0.0f;
+		for (int l3 = 0; l3 < 512; l3 = l3 + 1) {
+			fVec1[l3] = 0.0f;
 		}
 		for (int l6 = 0; l6 < 2; l6 = l6 + 1) {
-			fRec3[l6] = 0.0f;
+			fRec5[l6] = 0.0f;
 		}
 		for (int l7 = 0; l7 < 2; l7 = l7 + 1) {
-			fRec0[l7] = 0.0f;
+			fRec4[l7] = 0.0f;
 		}
-		for (int l8 = 0; l8 < 512; l8 = l8 + 1) {
-			fVec3[l8] = 0.0f;
+		for (int l8 = 0; l8 < 2; l8 = l8 + 1) {
+			fRec1[l8] = 0.0f;
 		}
-		for (int l11 = 0; l11 < 2; l11 = l11 + 1) {
-			fRec5[l11] = 0.0f;
+		for (int l9 = 0; l9 < 512; l9 = l9 + 1) {
+			fVec3[l9] = 0.0f;
+		}
+		for (int l12 = 0; l12 < 2; l12 = l12 + 1) {
+			fRec6[l12] = 0.0f;
 		}
 	}
 	
@@ -247,8 +253,9 @@ class FlangerDsp final : public FaustDsp {
 	
 	void buildUserInterface(UI* ui_interface) {
 		ui_interface->openVerticalBox("flanger");
-		ui_interface->addHorizontalSlider("feedback", &fHslider0, FAUSTFLOAT(0.5f), FAUSTFLOAT(0.0f), FAUSTFLOAT(0.95f), FAUSTFLOAT(0.001f));
-		ui_interface->addHorizontalSlider("speed", &fHslider1, FAUSTFLOAT(0.3f), FAUSTFLOAT(0.05f), FAUSTFLOAT(5.0f), FAUSTFLOAT(0.001f));
+		ui_interface->addHorizontalSlider("depth", &fHslider0, FAUSTFLOAT(1.0f), FAUSTFLOAT(0.0f), FAUSTFLOAT(1.0f), FAUSTFLOAT(0.001f));
+		ui_interface->addHorizontalSlider("feedback", &fHslider1, FAUSTFLOAT(0.5f), FAUSTFLOAT(0.0f), FAUSTFLOAT(0.9f), FAUSTFLOAT(0.001f));
+		ui_interface->addHorizontalSlider("speed", &fHslider2, FAUSTFLOAT(0.3f), FAUSTFLOAT(0.05f), FAUSTFLOAT(8.0f), FAUSTFLOAT(0.001f));
 		ui_interface->closeBox();
 	}
 	
@@ -259,39 +266,43 @@ class FlangerDsp final : public FaustDsp {
 		FAUSTFLOAT* output1 = outputs[1];
 		float fSlow0 = fConst1 * float(fHslider0);
 		float fSlow1 = fConst1 * float(fHslider1);
+		float fSlow2 = fConst1 * float(fHslider2);
 		for (int i0 = 0; i0 < count; i0 = i0 + 1) {
-			float fTemp0 = float(input0[i0]);
 			iVec0[0] = 1;
-			fRec1[0] = fSlow0 + fConst2 * fRec1[1];
-			float fTemp1 = std::min<float>(0.95f, std::max<float>(0.0f, fRec1[0]));
-			float fTemp2 = fTemp1 * fRec0[1] - fTemp0;
-			fVec1[IOTA0 & 511] = fTemp2;
-			fRec4[0] = fSlow1 + fConst2 * fRec4[1];
-			float fTemp3 = ((1 - iVec0[1]) ? 0.0f : fRec3[1] + fConst3 * std::min<float>(5.0f, std::max<float>(0.05f, fRec4[0])));
-			fRec3[0] = fTemp3 - std::floor(fTemp3);
-			int iTemp4 = std::max<int>(0, std::min<int>(int(65536.0f * fRec3[0]), 65535));
-			float fTemp5 = 124.0f * (ftbl0FlangerDspSIG0[iTemp4] + 1.0f);
-			float fTemp6 = fTemp5 + 8.0f;
-			int iTemp7 = int(fTemp6);
-			float fTemp8 = std::floor(fTemp6);
-			fRec0[0] = fVec1[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp7))) & 511] * (fTemp8 + (-7.0f - fTemp5)) + (fTemp5 + (8.0f - fTemp8)) * fVec1[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp7 + 1))) & 511];
-			output0[i0] = FAUSTFLOAT(0.5f * (fTemp0 + fRec0[0]));
-			float fTemp9 = float(input1[i0]);
-			float fTemp10 = fTemp1 * fRec5[1] - fTemp9;
-			fVec3[IOTA0 & 511] = fTemp10;
-			float fTemp11 = 124.0f * (ftbl1FlangerDspSIG1[iTemp4] + 1.0f);
-			float fTemp12 = fTemp11 + 8.0f;
-			int iTemp13 = int(fTemp12);
-			float fTemp14 = std::floor(fTemp12);
-			fRec5[0] = fVec3[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp13))) & 511] * (fTemp14 + (-7.0f - fTemp11)) + (fTemp11 + (8.0f - fTemp14)) * fVec3[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp13 + 1))) & 511];
-			output1[i0] = FAUSTFLOAT(0.5f * (fTemp9 + fRec5[0]));
+			fRec0[0] = fSlow0 + fConst2 * fRec0[1];
+			float fTemp0 = std::min<float>(1.0f, std::max<float>(0.0f, fRec0[0]));
+			float fTemp1 = float(input0[i0]);
+			fRec2[0] = fSlow1 + fConst2 * fRec2[1];
+			float fTemp2 = std::min<float>(0.9f, std::max<float>(0.0f, fRec2[0]));
+			float fTemp3 = fTemp2 * fRec1[1] - fTemp1;
+			fVec1[IOTA0 & 511] = fTemp3;
+			fRec5[0] = fSlow2 + fConst2 * fRec5[1];
+			float fTemp4 = ((1 - iVec0[1]) ? 0.0f : fRec4[1] + fConst3 * std::min<float>(8.0f, std::max<float>(0.05f, fRec5[0])));
+			fRec4[0] = fTemp4 - std::floor(fTemp4);
+			int iTemp5 = std::max<int>(0, std::min<int>(int(65536.0f * fRec4[0]), 65535));
+			float fTemp6 = 124.0f * (ftbl0FlangerDspSIG0[iTemp5] + 1.0f);
+			float fTemp7 = fTemp6 + 8.0f;
+			int iTemp8 = int(fTemp7);
+			float fTemp9 = std::floor(fTemp7);
+			fRec1[0] = fVec1[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp8))) & 511] * (fTemp9 + (-7.0f - fTemp6)) + (fTemp6 + (8.0f - fTemp9)) * fVec1[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp8 + 1))) & 511];
+			output0[i0] = FAUSTFLOAT(0.5f * (fTemp1 + fRec1[0] * fTemp0));
+			float fTemp10 = float(input1[i0]);
+			float fTemp11 = fTemp2 * fRec6[1] - fTemp10;
+			fVec3[IOTA0 & 511] = fTemp11;
+			float fTemp12 = 124.0f * (ftbl1FlangerDspSIG1[iTemp5] + 1.0f);
+			float fTemp13 = fTemp12 + 8.0f;
+			int iTemp14 = int(fTemp13);
+			float fTemp15 = std::floor(fTemp13);
+			fRec6[0] = fVec3[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp14))) & 511] * (fTemp15 + (-7.0f - fTemp12)) + (fTemp12 + (8.0f - fTemp15)) * fVec3[(IOTA0 - std::min<int>(513, std::max<int>(0, iTemp14 + 1))) & 511];
+			output1[i0] = FAUSTFLOAT(0.5f * (fTemp10 + fRec6[0] * fTemp0));
 			iVec0[1] = iVec0[0];
-			fRec1[1] = fRec1[0];
-			IOTA0 = IOTA0 + 1;
-			fRec4[1] = fRec4[0];
-			fRec3[1] = fRec3[0];
 			fRec0[1] = fRec0[0];
+			fRec2[1] = fRec2[0];
+			IOTA0 = IOTA0 + 1;
 			fRec5[1] = fRec5[0];
+			fRec4[1] = fRec4[0];
+			fRec1[1] = fRec1[0];
+			fRec6[1] = fRec6[0];
 		}
 	}
 

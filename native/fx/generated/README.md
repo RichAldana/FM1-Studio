@@ -9,8 +9,8 @@ those functions' own licences, all compatible with FM1 Mix's GPL-3.0-only:
 
 | Effect | Faust function | Licence (as the library declares it) |
 | --- | --- | --- |
-| faust.moog | `ve.moog_vcf_2bn` (Julius O. Smith III) | MIT-style STK-4.3 |
-| faust.echo | `de.sdelay` (GRAME) | LGPL with exception |
+| faust.moog | `ve.moog_vcf_2bn` (Julius O. Smith III); `ma.tanh` for its drive (GRAME) | MIT-style STK-4.3; LGPL with exception |
+| faust.echo | `de.sdelay`, `ma.tanh` (GRAME) | LGPL with exception |
 | faust.zita | `re.zita_rev1_stereo` (Julius O. Smith III, after Fons Adriaensen's zita-rev1) | MIT-style STK-4.3 |
 | faust.greyhole | `re.greyhole` (Julian Parker, Till Bovermann) | GPL-2.0-or-later |
 | faust.phaser | `pf.phaser2_stereo` (Julius O. Smith III) | MIT-style STK-4.3 |

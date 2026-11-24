@@ -3,7 +3,8 @@
 // engine (native/src/fx.rs: the XY layer, the slots, the clock) never knows which DSP library is underneath.
 //   - Faust effects: native/fx/faust/*.dsp compiled to C++ (native/fx/generated, `faust -lang cpp -nvi -i`), their
 //     sliders found by name through a UI that keeps their addresses (as Faust's MapUI does);
-//   - effects written here: the tape stop and the beat repeat (a ring buffer and a read head; they need the clock).
+//   - effects written here: the tape stop and the beat repeat (a ring buffer and a read head; they need the clock);
+//   - the other engines' wrappers, each in its own file (effect.h: make_airwin, make_surge, make_mi).
 // Audio thread rules: process, set_param and on_touch allocate nothing and take no lock; everything is allocated in
 // fx_new / fx_prepare.
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <string>
 #include <vector>
 #include "fxengine.h"
+#include "effect.h"
 #if defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
 #include <pmmintrin.h>
@@ -77,26 +79,6 @@ namespace fx_pump {
 #include "generated/pump.h"
 }
 
-// ---------------------------------------------------------------- the interface (the brief's IEffect)
-
-struct TransportInfo {
-    double bpm;
-    double beatPosition;   // beats since the clock started
-    bool running;
-};
-
-class IEffect {
-public:
-    virtual ~IEffect() = default;
-    virtual void prepare(double sampleRate, int blockSize) = 0;   // allocations here
-    virtual void reset() = 0;                                      // clears, allocates nothing
-    virtual void process(const float* inL, const float* inR, float* outL, float* outR, int n, const TransportInfo& t) = 0;
-    virtual void setParam(int index, float value) = 0;
-    virtual void onTouch(bool down) = 0;
-    virtual int numParams() const = 0;
-    virtual const char* paramName(int index) const = 0;
-};
-
 // ---------------------------------------------------------------- Faust
 
 struct ParamUI : UI {
@@ -144,14 +126,16 @@ public:
 
 // ---------------------------------------------------------------- tape stop (written here)
 
-// The finger down: the tape slows to a stop in `fall` seconds (the pitch going down with it); lifted: it spins up again
-// in 0.15 s and, once at speed, joins the live sound again by a 30 ms crossfade. "mix" is the slot's.
+// The finger down: the tape slows down in `fall` seconds to `depth` of its speed (0: a full stop; the pitch going down
+// with it); lifted: it spins up again in 0.15 s and, once at speed, joins the live sound again by a 30 ms crossfade.
+// The wet level is the slot's.
 class TapeStop : public IEffect {
     std::vector<float> buf;   // interleaved stereo
     size_t len = 0, w = 0;
     double r = 0;             // the read head (frames, may lag the write head)
     double speed = 1;
     float fall = 0.6f;
+    float depth = 0.f;        // the speed it falls to
     bool down = false;
     int join = 0;             // frames of the crossfade back to live left
     double sr = 44100;
@@ -179,7 +163,7 @@ public:
                 outL[i] = inL[i];
                 outR[i] = inR[i];
             } else {
-                if (down) speed = std::max(0.0, speed - fallStep);
+                if (down) speed = std::max((double)depth, speed - fallStep);
                 else speed = std::min(1.0, speed + upStep);
                 // read with linear interpolation
                 double rp = r;
@@ -202,26 +186,34 @@ public:
             w = (w + 1) % len;
         }
     }
-    void setParam(int i, float v) override { if (i == 0) fall = std::min(3.0f, std::max(0.03f, v)); }
+    void setParam(int i, float v) override {
+        if (i == 0) fall = std::min(3.0f, std::max(0.03f, v));
+        if (i == 1) depth = std::min(0.95f, std::max(0.f, v));
+    }
     void onTouch(bool d) override {
         down = d;
         if (d) { active = true; join = 0; }
     }
-    int numParams() const override { return 1; }
-    const char* paramName(int i) const override { return i == 0 ? "fall" : ""; }
+    int numParams() const override { return 2; }
+    const char* paramName(int i) const override { return i == 0 ? "fall" : i == 1 ? "depth" : ""; }
 };
 
 // ---------------------------------------------------------------- beat repeat (written here)
 
 // The finger down arms it; at the next line of the grid (`length` beats: 1/4 .. 1/64 of a whole note, so 1 .. 1/16
-// beat) it repeats the slice that just went by, again and again, each time `decay` quieter, until the finger lifts.
-// Loop edges have 2 ms fades. Its clock: the transport's beat position (the MIDI clock or the internal tempo).
+// beat) it repeats the slice that just went by, again and again until the finger lifts: `repeats` times at full level,
+// then each time `decay` quieter; `filter` (0..1) closes a lowpass a little more at each repeat. Loop edges have 2 ms
+// fades. Its clock: the transport's beat position (the MIDI clock or the internal tempo).
 class BeatRepeat : public IEffect {
     std::vector<float> buf;
     size_t len = 0, w = 0;
     double sr = 44100;
     float lengthBeats = 0.25f;
-    float decay = 0.2f;
+    float decay = 0.5f;
+    float repeats = 4.f;      // at full level, before the decay
+    float filter = 0.f;
+    int rep = 0;              // repeats played
+    float lpL = 0, lpR = 0;
     bool armed = false, repeating = false, release = false;
     size_t start = 0, sliceLen = 1, pos = 0;
     float gain = 1, relGain = 1;
@@ -255,6 +247,8 @@ public:
                 start = (w + len - sliceLen) % len;
                 pos = 0;
                 gain = 1;
+                rep = 0;
+                lpL = lpR = 0;
             }
             float l = inL[i], r = inR[i];
             if (repeating) {
@@ -264,6 +258,13 @@ public:
                 else if (sliceLen - pos < fade) e = (float)(sliceLen - pos) / fade;
                 float g = gain * e * relGain;
                 float rl = buf[2 * k] * g, rr = buf[2 * k + 1] * g;
+                if (filter > 0) {
+                    // a one-pole lowpass, closing with the repeats (none on the first pass)
+                    const float a = filter * 0.97f * (1.f - std::pow(0.7f, (float)rep));
+                    lpL += (1 - a) * (rl - lpL);
+                    lpR += (1 - a) * (rr - lpR);
+                    rl = lpL; rr = lpR;
+                }
                 if (release) {
                     // back to live in 10 ms
                     relGain = std::max(0.f, relGain - (float)(1.0 / (0.01 * sr)));
@@ -271,7 +272,10 @@ public:
                     r = rr + r * (1 - relGain);
                     if (relGain <= 0) { repeating = false; release = false; relGain = 1; }
                 } else { l = rl; r = rr; }
-                if (++pos >= sliceLen) { pos = 0; gain *= (1.f - 0.6f * decay); }
+                if (++pos >= sliceLen) {
+                    pos = 0;
+                    if (++rep >= (int)repeats) gain *= (1.f - 0.6f * decay);
+                }
             }
             outL[i] = l;
             outR[i] = r;
@@ -281,13 +285,17 @@ public:
     void setParam(int i, float v) override {
         if (i == 0) lengthBeats = std::min(1.0f, std::max(1.0f / 16.0f, v));
         if (i == 1) decay = std::min(1.0f, std::max(0.f, v));
+        if (i == 2) repeats = std::min(64.f, std::max(1.f, v));
+        if (i == 3) filter = std::min(1.0f, std::max(0.f, v));
     }
     void onTouch(bool d) override {
         if (d) { armed = true; release = false; relGain = 1; }
         else { armed = false; if (repeating) release = true; }
     }
-    int numParams() const override { return 2; }
-    const char* paramName(int i) const override { return i == 0 ? "length" : i == 1 ? "decay" : ""; }
+    int numParams() const override { return 4; }
+    const char* paramName(int i) const override {
+        return i == 0 ? "length" : i == 1 ? "decay" : i == 2 ? "repeats" : i == 3 ? "filter" : "";
+    }
 };
 
 // ---------------------------------------------------------------- the C interface
@@ -310,6 +318,9 @@ FxEffect* fx_new(const char* id) {
     else if (s == "faust.pump") e = new FaustEffect<fx_pump::PumpDsp>();
     else if (s == "cpp.tapestop") e = new TapeStop();
     else if (s == "cpp.beatrepeat") e = new BeatRepeat();
+    if (!e) e = make_airwin(s);
+    if (!e) e = make_surge(s);
+    if (!e) e = make_mi(s);
     return e ? new FxEffect{e} : nullptr;
 }
 
