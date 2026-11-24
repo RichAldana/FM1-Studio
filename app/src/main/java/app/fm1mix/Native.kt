@@ -2,7 +2,13 @@ package app.fm1mix
 
 /** JNI to libfm1mix.so (native/src/jni_api.rs). */
 object Native {
-    init { System.loadLibrary("fm1mix") }
+    /** why libfm1mix.so didn't load (then nothing below may be called), or null */
+    var loadError: String? = null
+        private set
+
+    init {
+        try { System.loadLibrary("fm1mix") } catch (e: Throwable) { loadError = e.toString() }
+    }
 
     /** Boots a .fwsc package. [flash] is an image saved by [stop] (or null). Returns "" or an error. */
     external fun start(pkg: ByteArray, flash: ByteArray?, mhz: Int, newChip: Boolean): String
