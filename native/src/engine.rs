@@ -179,11 +179,30 @@ struct Router {
     /// detents waiting per encoder (+ clockwise), and the machine cycle the next may go at
     enc_q: [i32; 8],
     enc_due: [u64; 8],
+    /// the knob speed's leftovers per encoder, in quarter detents (|x| < 4)
+    enc_frac: [i32; 8],
+}
+
+/// The knobs' speed, in quarter detents per detent turned: 1 (¼×), 2 (½×), 4 (1×), 8 (2×). It scales KNOB 1-4
+/// (matrix encoders 2..5), from the screen and from the FM-1's panel alike; SELECT, ALGORITHM and PRESETS too when
+/// [KNOB_SPEED_ALL] is set. A slow speed keeps what is left over: two half turns make a detent.
+pub static KNOB_SPEED_Q: AtomicU32 = AtomicU32::new(4);
+pub static KNOB_SPEED_ALL: AtomicBool = AtomicBool::new(false);
+
+/// `clicks` detents turned at speed `q` (quarters), with `frac` the encoder's leftover: the detents to play.
+fn scale_detents(clicks: i32, q: i32, frac: &mut i32) -> i32 {
+    if q == 4 {
+        return clicks;
+    }
+    let t = *frac + clicks * q;
+    let whole = t / 4;          // (toward zero: what is left keeps the turn's sign)
+    *frac = t - whole * 4;
+    whole
 }
 
 impl Router {
     fn new() -> Self {
-        Router { mode: MidiMode::ClockOnly, mapper: None, parser: MidiParser::default(), outs: Vec::new(), enc_q: [0; 8], enc_due: [0; 8] }
+        Router { mode: MidiMode::ClockOnly, mapper: None, parser: MidiParser::default(), outs: Vec::new(), enc_q: [0; 8], enc_due: [0; 8], enc_frac: [0; 8] }
     }
 
     fn set_mode(&mut self, m: &mut Machine, mode: MidiMode, profile: Option<Box<Profile>>) {
@@ -193,6 +212,7 @@ impl Router {
         }
         self.flush(m);
         self.enc_q = [0; 8];
+        self.enc_frac = [0; 8];
         self.mapper = profile.map(|p| Mapper::new(*p));
         self.mode = mode;
         self.parser = MidiParser::default();
@@ -220,9 +240,13 @@ impl Router {
     }
 
     fn enc(&mut self, enc: u8, clicks: i32) {
-        if let Some(q) = self.enc_q.get_mut(enc as usize) {
-            *q = (*q + clicks).clamp(-1000, 1000);
+        let i = enc as usize;
+        if i >= 8 {
+            return;
         }
+        let scaled = (2..=5).contains(&i) || KNOB_SPEED_ALL.load(Ordering::Relaxed);
+        let n = if scaled { scale_detents(clicks, KNOB_SPEED_Q.load(Ordering::Relaxed) as i32, &mut self.enc_frac[i]) } else { clicks };
+        self.enc_q[i] = (self.enc_q[i] + n).clamp(-1000, 1000);
     }
 
     /// The detents due now, one per encoder (called at each turn of the machine loop).
@@ -296,6 +320,8 @@ pub struct Shared {
     leds: Mutex<[f32; 41]>,
     status: Mutex<String>,
     quit: AtomicBool,
+    /// the engine thread has a performance hint session (ADPF)
+    pub hint: AtomicBool,
     started: AtomicBool,
     underruns: AtomicU64,
     ext_underruns: AtomicU64,
@@ -340,6 +366,7 @@ impl Shared {
             midi_count: AtomicU64::new(0),
             midi_last: AtomicU32::new(0),
             load: AtomicU32::new(0),
+            hint: AtomicBool::new(false),
             halted: AtomicBool::new(false),
             emu_base_ms: AtomicU32::new(EMU_MS_NORMAL),
             ext_target_ms: AtomicU32::new(EXT_MS_NORMAL),
@@ -612,6 +639,10 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
     let (mut last_look, mut looked, mut published) = (Instant::now(), m.soc.flash.mem.clone(), m.soc.flash.mem.clone());
     let (mut moved_at, mut gen) = (Instant::now(), 0u64);
     let mut busy = Duration::ZERO;
+    // the performance hint (ADPF): how long each window's worth of audio took to make
+    let mut hint = crate::hint::Hint::for_this_thread();
+    sh.hint.store(hint.is_some(), Ordering::Relaxed);
+    let (mut hint_busy, mut hint_wall, mut hint_cycles) = (Duration::ZERO, Instant::now(), m.soc.periph.cycles);
     while !sh.quit.load(Ordering::Relaxed) {
         while let Ok(c) = rx.try_recv() {
             match c {
@@ -640,7 +671,9 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
             let t = Instant::now();
             // a panic in the emulator must not take the app down: it stops the machine, with its reason
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| m.run(20_000)));
-            busy += t.elapsed();
+            let took = t.elapsed();
+            busy += took;
+            hint_busy += took;
             let err = match r {
                 Ok(Ok(())) => None,
                 Ok(Err(e)) => Some(e),
@@ -667,6 +700,15 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
                 q.drain(..extra);
             }
         }
+        if let Some(h) = hint.as_mut() {
+            if hint_wall.elapsed() >= crate::hint::WINDOW {
+                let made = (m.soc.periph.cycles - hint_cycles) as f64 / m.soc.periph.hz as f64;
+                h.report(hint_busy, Duration::from_secs_f64(made));
+                hint_busy = Duration::ZERO;
+                hint_wall = Instant::now();
+                hint_cycles = m.soc.periph.cycles;
+            }
+        }
         if last_ui.elapsed() >= Duration::from_millis(16) {
             sh.lcd.lock().unwrap().copy_from_slice(&m.soc.lcd.fb);
             *sh.leds.lock().unwrap() = m.soc.periph.led_shown();
@@ -690,7 +732,8 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
             sh.load.store((busy.as_secs_f64() / wall.as_secs_f64() * 100.0).round() as u32, Ordering::Relaxed);
             busy = Duration::ZERO;
             *sh.status.lock().unwrap() =
-                format!("{:.2}x real time | {} MHz | queued {:.0} ms", speed, m.soc.periph.hz / 1_000_000, buffered);
+                format!("{:.2}x real time | {} MHz | queued {:.0} ms{}", speed, m.soc.periph.hz / 1_000_000, buffered,
+                    if hint.is_some() { " | ADPF" } else { "" });
             stat_emu = e;
             stat_wall = Instant::now();
             last_stat = Instant::now();
@@ -702,6 +745,21 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use super::MidiParser;
+
+    #[test]
+    fn knob_speed_keeps_what_is_left() {
+        use super::scale_detents;
+        let turn = |q: i32, steps: &[i32]| { let mut f = 0; steps.iter().map(|&c| scale_detents(c, q, &mut f)).sum::<i32>() };
+        assert_eq!(turn(4, &[1, 1, 3, -2]), 3);           // 1x: as turned
+        assert_eq!(turn(2, &[1; 10]), 5);                 // 1/2x: one detent every two
+        assert_eq!(turn(1, &[1; 10]), 2);                 // 1/4x: every four
+        assert_eq!(turn(8, &[1, 2, -1]), 4);              // 2x: twice
+        assert_eq!(turn(2, &[-1; 6]), -3);                // counter-clockwise alike
+        assert_eq!(turn(2, &[1, -1, 1, -1, 1]), 0);       // back and forth on the spot: nothing
+        let mut f = 0;
+        assert_eq!(scale_detents(1, 2, &mut f), 0);
+        assert_eq!(scale_detents(1, 2, &mut f), 1);       // the second half makes it
+    }
 
     fn run(bytes: &[u8]) -> Vec<Vec<u8>> {
         let mut p = MidiParser::default();

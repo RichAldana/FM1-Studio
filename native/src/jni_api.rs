@@ -405,6 +405,15 @@ pub extern "system" fn Java_app_fm1mix_Native_setMix(_e: JNIEnv, _c: JClass, bal
     set_f(&MASTER, master.clamp(0.0, 2.0));
 }
 
+/// The knobs' speed: quarter detents per detent turned (1, 2, 4, 8), and whether it scales SELECT, ALGORITHM and
+/// PRESETS too (engine.rs KNOB_SPEED_Q).
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_setKnobSpeed(_e: JNIEnv, _c: JClass, quarters: jint, all: jboolean) {
+    use std::sync::atomic::Ordering;
+    crate::engine::KNOB_SPEED_Q.store(quarters.clamp(1, 16) as u32, Ordering::Relaxed);
+    crate::engine::KNOB_SPEED_ALL.store(all != 0, Ordering::Relaxed);
+}
+
 /// out = [the captured FM-1's queue (ms), its clock against the phone's (ppm), the limiter's reduction (dB)]
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_audioInfo(env: JNIEnv, _c: JClass, out: jni::objects::JFloatArray) {

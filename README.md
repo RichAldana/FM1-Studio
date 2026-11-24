@@ -1,4 +1,4 @@
-# FM1 Mix (bêta, v0.17)
+# FM1 Mix (bêta, v0.20)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -9,6 +9,54 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- audio USB ---> AudioRecord ---+
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
+
+## v0.20 : vitesse des potards, session ADPF
+- **Réglages > Potards > Vitesse des potards** : ¼×, ½×, 1× ou 2× pour KNOB 1 à 4, ceux de l'écran comme ceux du FM-1
+  en PANEL MIDI ; en option SELECT, ALGO et PRESET aussi. Les fractions sont gardées (deux demi-crans font un cran) ;
+  gardé pour chaque firmware. Dans le moteur (`engine.rs` `KNOB_SPEED_Q`, test `knob_speed_keeps_what_is_left`).
+- **Session ADPF** (`native/src/hint.rs`, sur le modèle de celle de Harbor) : toutes les 10 ms, le fil du moteur dit
+  à Android combien de temps a pris le son de ces 10 ms, pour une cible de 6 ms ; Android peut monter l'horloge ou
+  le passer sur un gros cœur avant que le son manque. Android 13 et plus (cherché à l'exécution : rien ne change
+  avant) ; le fil demande aussi la priorité audio. « | ADPF » dans l'état du moteur (Réglages > Aide > Diagnostic)
+  quand la session tourne.
+
+## v0.19 : français ou anglais
+- L'app parle **français si le téléphone est en français, anglais sinon**. Sur Android 13 et plus, la langue de FM1 Mix
+  se choisit aussi seule dans les réglages du téléphone (Applications > FM1 Mix > Langue), grâce à
+  `res/xml/locales_config.xml`.
+- Chaque texte est écrit en place dans les deux langues : `tr("Enregistrer", "Record")` (`Lang.kt`). Environ 460 textes :
+  menus, aides, messages, enregistreur, mixeur, découpeur, diagnostic ; les noms des effets et de leurs axes aussi.
+- Restent tels quels : les noms des boutons du FM-1 (sérigraphiés), les noms de firmwares, le dossier `Découpes`, les
+  messages techniques déjà en anglais.
+
+## v0.18 : nouveau bandeau, coupe/allumé au mixeur, noms des notes qui suivent l'octave
+- **Bandeau** (`TopBar.kt`) : un bouton ⑂ (le catalogue de firmwares) remplace le nom écrit ; le nom du firmware passe
+  en tête de la ligne d'état. Puis le découpeur, REC (le chrono s'affiche dans le bouton), marche/arrêt, et deux
+  interrupteurs gauche/droite :
+  - **qui joue l'émulé** : le téléphone (icône téléphone) ou le panneau du FM-1 (icône machine, PANEL MIDI) ; grisé
+    sans LOOM-8 avec PANEL MIDI branché ;
+  - **où sort le son** : le téléphone ou le FM-1, même principe d'icônes.
+  Ensuite le voyant MIDI (cerclé d'ambre en PANEL MIDI ; appui long : bascule PANEL), la charge, les réglages. Tout se
+  réduit ensemble sur un écran étroit.
+- **Mixeur** : le nom de chaque tranche (ÉMULÉ, FM-1, MASTER) est son bouton allumé/coupé ; coupée, la tranche est
+  muette et voilée, son volume et son EQ gardés. Retenu (l'émulé par firmware).
+- **Clavier** : les noms des notes suivent l'octave. L'app compte OCT - et OCT + (touchés à l'écran, ou sur le FM-1 en
+  PANEL MIDI), de -4 à +4, gardé par firmware. Réglages > Clavier : notes **aucune**, **les do** (C4, C5…, par défaut)
+  ou **toutes** ; et l'octave à recaler si le firmware en change autrement.
+- `EN-SUSPENS.md` : la liste des sujets en attente.
+
+## v0.17.3 : correctif de compilation
+- 0.17.2 ne se compilait pas (`pthread_atfork` introuvable) : le chemin ajouté en 0.17.1 vers le dossier C++ du NDK
+  contient aussi `libc.a`, qui passait devant la `libc.so` du téléphone. Chemin retiré : clang trouve `libc++abi`
+  tout seul. (Ce même chemin explique sans doute aussi la fermeture de 0.17.1.)
+
+## v0.17.2 : correctif de démarrage
+- 0.17 se fermait à l'ouverture : la bibliothèque native était liée avec le runtime C++ dans le mauvais ordre
+  (`c++abi` avant le code qui en a besoin), il lui manquait des symboles et Android refusait de la charger. Ordre
+  corrigé dans `native/build.rs`, et `-Wl,--no-undefined` : un symbole manquant fait maintenant échouer la
+  compilation sur GitHub au lieu de l'app sur le téléphone.
+- Si la bibliothèque ne se charge pas, l'app l'écrit à l'écran (avec un bouton pour copier l'erreur) au lieu de se
+  fermer. Toute autre fermeture inattendue est gardée et montrée à l'ouverture suivante, à copier.
 
 ## v0.17 : moteur d'effets XY (étape 1 du brief : 11 effets)
 - **Le pad n'est plus que dans la zone du milieu** (la plus grande) ; le bas garde le clavier et le mixeur.
