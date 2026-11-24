@@ -5,11 +5,17 @@
 //! against a target lets it raise the clock or move the thread first.
 //!
 //! `APerformanceHint_*` is in libandroid from API 33; FM1 Mix starts at 31, so the functions are
-//! looked up at run time. Without them, or without a session, the engine runs as before. The
-//! engine thread also asks for the audio priority (nice -19, THREAD_PRIORITY_URGENT_AUDIO); refused,
-//! nothing changes.
+//! looked up at run time. Without them, or without a session, the engine runs as before.
+//!
+//! Off unless asked for ([ON], Settings > Machine): 0.20 had it always on, with the engine thread at the audio
+//! priority (nice -19), and a phone crackled and saturated sooner than before. The priority is gone (the engine,
+//! busy most of a core, could starve the thread that hands the sound to Android); the session stays, to try.
 
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
+
+/// Ask for a session when the engine starts (read at each start).
+pub static ON: AtomicBool = AtomicBool::new(false);
 
 /// How much audio one report covers.
 pub const WINDOW: Duration = Duration::from_millis(10);
@@ -67,8 +73,9 @@ impl Hint {
     pub fn for_this_thread() -> Option<Hint> {
         #[cfg(target_os = "android")]
         {
-            // SAFETY: on this thread's own id
-            unsafe { libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, -19) };
+            if !ON.load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
             let api = sys::load()?;
             let target = (WINDOW.as_nanos() as f64 * TARGET_LOAD) as i64;
             // SAFETY: NDK calls with a one-thread id array; a null manager or session: no ADPF here

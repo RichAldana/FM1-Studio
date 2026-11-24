@@ -405,6 +405,12 @@ pub extern "system" fn Java_app_fm1mix_Native_setMix(_e: JNIEnv, _c: JClass, bal
     set_f(&MASTER, master.clamp(0.0, 2.0));
 }
 
+/// The performance hint session (hint.rs), from the next start of the engine.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_setHint(_e: JNIEnv, _c: JClass, on: jboolean) {
+    crate::hint::ON.store(on != 0, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The knobs' speed: quarter detents per detent turned (1, 2, 4, 8), and whether it scales SELECT, ALGORITHM and
 /// PRESETS too (engine.rs KNOB_SPEED_Q).
 #[no_mangle]
