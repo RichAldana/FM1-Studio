@@ -1,0 +1,85 @@
+# Publishes a version of the app: builds the APK and attaches it to a GitHub release as fm1mix.apk.
+# The download link always gives the last published version, and changes only when this runs (never on a plain push):
+#   https://github.com/RichAldana/FM1-Studio/releases/latest/download/fm1mix.apk
+# Two ways to run it:
+#   - GitHub: Actions tab > "Publish the app" > Run workflow: the version is versionName in app/build.gradle.kts;
+#   - push a tag v0.22 (the version is the tag's).
+# It refuses a version already published: raise versionName (and versionCode) first.
+# The APK is signed with the repository's key (app/debug.keystore): every version installs over the last one.
+name: Publish the app
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ['v[0-9]*']
+permissions:
+  contents: write
+concurrency:
+  group: release-apk
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The version (and not one already published)
+        id: v
+        run: |
+          set -euo pipefail
+          name=$(sed -n 's/^ *versionName *= *"\(.*\)".*/\1/p' app/build.gradle.kts)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            v=${GITHUB_REF_NAME#v}
+            [ "$v" = "$name" ] || echo "::warning::the tag says $v, app/build.gradle.kts says $name (the app will show $name)"
+          else
+            v=$name
+          fi
+          [[ "$v" =~ ^[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?$ ]] || { echo "::error::version '$v'?"; exit 1; }
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "::error::v$v is already published: raise versionName and versionCode in app/build.gradle.kts"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: fm1-emu (the emulator core, MIT)
+        run: |
+          [ -d third_party/fm1-emu/crates ] || git clone --depth 1 https://github.com/joakimeriksson/fm1-emu third_party/fm1-emu
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Android platform and NDK
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKM="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" "ndk;26.3.11579264"
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-linux-android }
+      - run: cargo install cargo-ndk --locked
+      - name: libfm1mix.so (arm64)
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk/26.3.11579264"
+          bash build-native.sh
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - run: gradle :app:assembleDebug --stacktrace
+      - name: Publish the release
+        run: |
+          set -euo pipefail
+          v="${{ steps.v.outputs.version }}"
+          mkdir dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/fm1mix.apk
+          cp dist/fm1mix.apk "dist/fm1mix-$v.apk"
+          (cd dist && sha256sum fm1mix.apk "fm1mix-$v.apk" > SHA256SUMS)
+          # the notes: this version's section of README.md ("## v0.21 : ..."), and how to install
+          awk -v h="## v$v " 'index($0, h) == 1 { on = 1; next } on && /^## / { exit } on' README.md > notes.md
+          {
+            echo
+            echo "### Installer"
+            echo "Sur le téléphone, ouvrir ce lien et installer \`fm1mix.apk\` (autoriser l'installation depuis le navigateur la première fois) :"
+            echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/fm1mix.apk"
+            echo
+            echo "Chaque version s'installe par-dessus la précédente, les réglages restent."
+          } >> notes.md
+          prerelease=()
+          [[ "$v" == *-* ]] && prerelease=(--prerelease)
+          gh release create "v$v" dist/* --target "$GITHUB_SHA" --title "FM1 Mix $v" --notes-file notes.md "${prerelease[@]}"
+          echo "published v$v: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/fm1mix.apk"

@@ -2,6 +2,12 @@
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
+**Télécharger la dernière version** (Android, arm64) :
+[fm1mix.apk](https://github.com/RichAldana/FM1-Studio/releases/latest/download/fm1mix.apk) ·
+[toutes les versions](https://github.com/RichAldana/FM1-Studio/releases).
+Ce lien ne change qu'à la publication d'une version (Actions > « Publish the app » > Run workflow, qui prend
+`versionName` de `app/build.gradle.kts`), jamais à un simple push. Chaque version s'installe par-dessus la précédente.
+
 Un FM-1 émulé sur Android (cœur : [fm1-emu](https://github.com/joakimeriksson/fm1-emu), MIT) qui
 mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MIDI de ce FM-1.
 

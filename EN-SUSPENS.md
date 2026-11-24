@@ -9,8 +9,13 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
   et la sensibilité des axes.
 - **Retour à l'origine** quand on lève le doigt ou qu'on sort de HOLD : progressif ou immédiat, au choix (par effet,
   ou en réglage général). Aujourd'hui : chaque profil a son geste (`return`, `hold`, `action`) et ses temps.
-- **Boucle granulaire et Texture** : doigt posé = gel. À essayer en jeu ; si c'est trop radical, le gel pourrait
-  n'arriver qu'après un appui long, ou passer par HOLD.
+- **Effets à revérifier en jeu** (retour de test du 24 novembre) : le granulaire (Texture, Boucle granulaire) ne
+  semble pas du tout effectif ; repasser les autres un par un.
+  Pistes pour le granulaire : (1) dans Clouds, DENSITY au milieu (0,5) ne joue **aucun** grain (à gauche des grains
+  réguliers, à droite des grains au hasard) ; les coins du profil sont à 0,35-0,9, donc le milieu du pad tombe près de
+  0,6 : presque rien ; à remapper sur 0,7-1,0 (ou 0-0,3) ; (2) doigt posé = gel immédiat : on n'entend que ce qui
+  était déjà dans le tampon, et rien ne suit le son en direct ; essayer le gel seulement par HOLD ou après un appui
+  long ; (3) vérifier le niveau d'entrée (Clouds attend un signal fort) et la position de lecture.
 - Options du brief non faites : la pression du doigt sur Y, l'écran de debug (latence, CPU par effet), Ableton Link.
 
 ## Sensibilité des potards (encodeurs) : toujours un problème
@@ -90,6 +95,13 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
   anglais pourront être ajustés.
 
 ## Installateur web de l'app
+- Préparé (24 novembre) : `.github/workflows/release-apk.yml` (« Publish the app », à la main ou sur un tag) publie
+  `fm1mix.apk` dans une release ; lien fixe dans le README :
+  `https://github.com/RichAldana/FM1-Studio/releases/latest/download/fm1mix.apk`. Signé avec la clé du dépôt
+  (`app/debug.keystore`) : les versions s'installent l'une sur l'autre. Reste ci-dessous : la clé privée, la page,
+  les mises à jour dans l'app, Obtainium.
+- LOOM-8 PANEL MIDI : site et installateur web préparés pour LOOM8-Remote (`pages.yml`, appelé par `release.yml`
+  sur un tag `v0.18.2-pm1`), lien `https://richaldana.github.io/LOOM8-Remote/install/`.
 - Une page (GitHub Pages) avec un bouton « Installer » qui pointe toujours vers le dernier APK publié, la version et les
   nouveautés, un QR code pour qui ouvre la page sur ordinateur, et le mode d'emploi pour autoriser l'installation.
 - À faire :
