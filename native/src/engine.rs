@@ -557,8 +557,9 @@ impl Engine {
             pe = pe.max(eb[i].abs() as u32);
             px = px.max(xb[i].abs() as u32);
         }
-        let mut fxb = crate::fx::ENGINE.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(bank) = fxb.as_mut() {
+        // (never waits: while the screen changes an effect, this block goes dry rather than late)
+        let mut fxb = crate::fx::ENGINE.try_lock().ok();
+        if let Some(bank) = fxb.as_mut().and_then(|g| g.as_mut()) {
             bank.process(1, &mut eb);
             if phone { bank.process(2, &mut xb); }
             for k in 0..crate::loops::SLOTS { bank.process(3 + k, &mut parts[k * n2..(k + 1) * n2]); }
@@ -578,7 +579,7 @@ impl Engine {
             pl = pl.max(l.abs() as u32);
             mix[i] = eb[i] + xb[i] + l;
         }
-        if let Some(bank) = fxb.as_mut() { bank.process(0, &mut mix); }
+        if let Some(bank) = fxb.as_mut().and_then(|g| g.as_mut()) { bank.process(0, &mut mix); }
         drop(fxb);
         let mut rec = vec![0f32; n];
         for i in 0..n {

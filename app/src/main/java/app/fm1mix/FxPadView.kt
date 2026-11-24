@@ -183,9 +183,11 @@ class FxPadView(ctx: Context) : View(ctx) {
     override fun onAttachedToWindow() { super.onAttachedToWindow(); FxState.views.add(this) }
     override fun onDetachedFromWindow() { FxState.views.remove(this); super.onDetachedFromWindow() }
 
-    private fun chip(c: Canvas, x: Float, y: Float, h: Float, label: String, on: Boolean, enabled: Boolean, size: Float = 12.5f, act: () -> Unit): Float {
+    /** a pill with [label]; [lead]: room left of the text (a track's dot) */
+    private fun chip(c: Canvas, x: Float, y: Float, h: Float, label: String, on: Boolean, enabled: Boolean, size: Float = 12.5f,
+                     lead: Float = 0f, act: () -> Unit): Float {
         p.textSize = size * d; p.typeface = Typeface.DEFAULT_BOLD; p.textAlign = Paint.Align.CENTER
-        val w = p.measureText(label) + (if (size < 12f) 18f else 24f) * d
+        val w = p.measureText(label) + (if (size < 12f) 18f else 24f) * d + lead
         r.set(x, y, x + w, y + h)
         p.style = if (on) Paint.Style.FILL else Paint.Style.STROKE
         p.strokeWidth = 1.5f * d
@@ -193,7 +195,7 @@ class FxPadView(ctx: Context) : View(ctx) {
         c.drawRoundRect(r, h / 2f, h / 2f, p)
         p.style = Paint.Style.FILL
         p.color = when { on -> 0xFF1E1F22.toInt(); enabled -> 0xFFD9D6CE.toInt(); else -> 0xFF5A5C62.toInt() }
-        c.drawText(label, x + w / 2f, y + h / 2f + size * 0.36f * d, p)
+        c.drawText(label, x + lead + (w - lead) / 2f, y + h / 2f + size * 0.36f * d, p)
         if (enabled) chips.add(Pair(RectF(r), act))
         return x + w + 6f * d
     }
@@ -222,10 +224,10 @@ class FxPadView(ctx: Context) : View(ctx) {
         var x = 12f * d - scroll[2]
         for (k in 0 until FxState.TRACKS) {
             val x0 = x
-            x = chip(c, x, trackTop(), th, s.name(k), k == t, true, 11.5f) { selectTrack(k) }
-            // its dot: a pattern playing (green), an effect on it (amber)
+            // its dot: a pattern playing (green), an effect on it (amber); room is made for it before the name
             val dot = when { Motion.isPlaying(k) -> green; s.selected[k] >= 0 -> if (k == t) 0xFF1E1F22.toInt() else amber; else -> 0 }
-            if (dot != 0) { p.color = dot; c.drawCircle(x0 + 7.5f * d, trackTop() + th / 2f, 2.8f * d, p) }
+            x = chip(c, x, trackTop(), th, s.name(k), k == t, true, 11.5f, if (dot != 0) 8f * d else 0f) { selectTrack(k) }
+            if (dot != 0) { p.color = dot; c.drawCircle(x0 + 10f * d, trackTop() + th / 2f, 2.8f * d, p) }
         }
         c.restore()
         // ---- the pad

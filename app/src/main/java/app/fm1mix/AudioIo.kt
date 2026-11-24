@@ -128,10 +128,25 @@ class AudioIo(private val ctx: Context) {
         }
     }
 
-    /** Raw audio when the phone offers it (no gain control, no noise reduction on the FM-1's sound), else MIC. */
+    /** Raw audio when the phone offers it (no gain control, no noise reduction on the FM-1's sound), else
+     *  VOICE_RECOGNITION: Android requires that one flat, without gain control or noise reduction. (MIC, before 0.28,
+     *  let some phones treat the FM-1 as a voice: crackling, metallic, muffled.) */
     private fun captureSource(): Int =
         if (am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true")
-            MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.MIC
+            MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_RECOGNITION
+
+    private fun sourceName(s: Int) = if (s == MediaRecorder.AudioSource.UNPROCESSED) "UNPROCESSED" else "VOICE_RECOGNITION"
+
+    /** what the phone may still put on the capture (noise suppression, gain control, echo cancelling): switched off,
+     *  kept until the capture stops */
+    private val plainFx = ArrayList<android.media.audiofx.AudioEffect>()
+    private fun plainCapture(session: Int) {
+        plainFx.forEach { runCatching { it.release() } }      // (a format tried before this one)
+        plainFx.clear()
+        runCatching { if (android.media.audiofx.NoiseSuppressor.isAvailable()) android.media.audiofx.NoiseSuppressor.create(session)?.let { it.enabled = false; plainFx += it } }
+        runCatching { if (android.media.audiofx.AutomaticGainControl.isAvailable()) android.media.audiofx.AutomaticGainControl.create(session)?.let { it.enabled = false; plainFx += it } }
+        runCatching { if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) android.media.audiofx.AcousticEchoCanceler.create(session)?.let { it.enabled = false; plainFx += it } }
+    }
 
     fun start(allowCapture: Boolean): String {
         if (running) return "already running"
@@ -209,6 +224,7 @@ class AudioIo(private val ctx: Context) {
             }
             if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); errors += tr("$t : refusé", "$t: refused"); continue }
             r.setPreferredDevice(dev)
+            plainCapture(r.audioSessionId)
             try { r.startRecording() } catch (e: Exception) { r.release(); errors += tr("$t : ${e.message}", "$t: ${e.message}"); continue }
             if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) { r.release(); errors += tr("$t : ne démarre pas", "$t: does not start"); continue }
             // Android may fall back on the phone's microphone when the USB driver refuses a format: then try the next
@@ -232,7 +248,7 @@ class AudioIo(private val ctx: Context) {
                     if (m > 0) { Native.pushCapture(st, m); androidSamples += m }
                 }
             }, "fm1-in").also { it.priority = Thread.MAX_PRIORITY; it.start() }
-            captureState = "capture $t"
+            captureState = "capture $t · " + sourceName(captureSource())
             return captureState
         }
         captureState = tr("capture impossible (", "capture failed (") + errors.joinToString(" ; ") + ")"
@@ -247,6 +263,8 @@ class AudioIo(private val ctx: Context) {
         runCatching { r.stop() }                     // (and a blocked read returns)
         runCatching { inThread?.join(500) }
         runCatching { r.release() }
+        plainFx.forEach { runCatching { it.release() } }
+        plainFx.clear()
         inThread = null
     }
 

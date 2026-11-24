@@ -3,8 +3,8 @@
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
 **Télécharger la dernière version** (Android, arm64), lien pour tout le monde :
-[fm1mix.apk](https://github.com/RichAldana/FM1-Mix/releases/latest/download/fm1mix.apk) ·
-[toutes les versions](https://github.com/RichAldana/FM1-Mix/releases) (dépôt public des seules versions publiées,
+[fm1mix.apk](https://github.com/RichAldana/FM1-Studio/releases/latest/download/fm1mix.apk) ·
+[toutes les versions](https://github.com/RichAldana/FM1-Studio/releases) (ou, si `PUBLIC_REPO` est réglé, le dépôt public des seules versions publiées,
 avec le code source de chacune ; ce dépôt-ci peut rester privé).
 Ce lien ne change qu'à la publication d'une version (Actions > « Publish the app » > Run workflow, qui prend
 `versionName` de `app/build.gradle.kts`), jamais à un simple push. Chaque version s'installe par-dessus la précédente.
@@ -44,6 +44,11 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
   veut : dossier, carte SD, Drive) ou « Envoyer… » (mail, WhatsApp, Signal…).
 - Projets version 2 : ils gardent aussi l'effet de chaque piste et les motions ; les projets 0.27 s'ouvrent toujours.
 - Encodeur FLAC maison (`native/src/flac.rs`), lecture par la bibliothèque claxon (Apache-2.0, voir `NOTICE.md`).
+- **Son du FM-1 sur la sortie téléphone** (craquements, son métallique et étouffé) : la capture USB ne passe plus par
+  la source « MIC » d'Android (traitée comme une voix sur certains téléphones) mais par UNPROCESSED, sinon
+  VOICE_RECOGNITION (plate, sans contrôle de gain ni réduction de bruit), et l'app coupe ce que le téléphone ajouterait
+  encore (réduction de bruit, gain automatique, annulation d'écho). La ligne d'état dit la source utilisée. Le son
+  n'attend plus les effets : pendant un changement d'effet, un bloc passe sans effet plutôt qu'en retard.
 
 ## v0.27 : projets, noms des boucles, mode boucle visible
 - **Projets** (Réglages > Projet) : « Enregistrer le projet… » écrit un fichier `.fm1mix` dans Documents/Fm1mix projects
