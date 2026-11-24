@@ -20,10 +20,8 @@ fn main() {
     b.compile("fxengine");
     if target.contains("android") {
         // rustc looks for a "static=" library itself and doesn't know the NDK's folders, so c++abi goes to the
-        // linker (NDK clang) as a plain -lc++abi: there is only libc++abi.a, so that is what it takes.
-        if let Some(dir) = ndk_lib_dir(&target) {
-            println!("cargo:rustc-link-search=native={}", dir.display());
-        }
+        // linker (NDK clang) as a plain -lc++abi: clang knows where it is, and there is only libc++abi.a.
+        // No -L to that folder: it also holds libc.a, which would then win over the phone's libc.so.
         println!("cargo:rustc-link-lib=c++abi");
         // a symbol nobody provides fails the build here instead of the app on the phone
         println!("cargo:rustc-cdylib-link-arg=-Wl,--no-undefined");
@@ -31,20 +29,3 @@ fn main() {
     println!("cargo:rerun-if-changed=fx");
 }
 
-/// the NDK's folder of C++ runtime libraries for this target (sysroot/usr/lib/<triple>), when the NDK is found
-fn ndk_lib_dir(target: &str) -> Option<std::path::PathBuf> {
-    let ndk = ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "NDK_HOME", "CARGO_NDK_ANDROID_NDK_HOME"]
-        .iter()
-        .find_map(|v| std::env::var_os(v))?;
-    let triple = match target.split('-').next()? {
-        "aarch64" => "aarch64-linux-android",
-        "armv7" | "thumbv7neon" => "arm-linux-androideabi",
-        "x86_64" => "x86_64-linux-android",
-        "i686" => "i686-linux-android",
-        _ => return None,
-    };
-    let prebuilt = std::path::Path::new(&ndk).join("toolchains/llvm/prebuilt");
-    std::fs::read_dir(&prebuilt).ok()?.flatten().map(|host| {
-        host.path().join("sysroot/usr/lib").join(triple)
-    }).find(|d| d.join("libc++abi.a").exists())
-}
