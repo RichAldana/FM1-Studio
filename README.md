@@ -1,4 +1,4 @@
-# FM1 Mix (bêta, v0.28)
+# FM1 Mix (bêta, v0.28.2)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -17,6 +17,17 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- audio USB ---> AudioRecord ---+
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
+
+## v0.28.1 et v0.28.2 : le son du FM-1 propre sur la sortie téléphone, un tempo stable
+- **Tempo de l'horloge MIDI** : l'affichage sautait sans cesse, jusqu'à des dizaines de milliers de BPM. Android livre
+  le MIDI de l'USB par paquets (plusieurs tops d'horloge à la fois), et le tempo était mesuré entre deux tops. Il est
+  maintenant tiré de tous les tops des 4 derniers temps (une régression), et suit un changement de tempo en un temps
+  ou deux. Test : `native/src/fx.rs` (`bunched_ticks_give_a_steady_tempo`).
+- Pixel 8a sous Android 16 : le son du FM-1 sortait craquant, métallique et étouffé sur le téléphone. Il est de nouveau
+  lu par le pilote USB de l'app (détails dans la 0.28 ci-dessous ; réglage : Réglages › Sortie › « Lu par le pilote de
+  l'app »). Testé sur le Pixel 8a : propre.
+- Les effets : le point d'une piste ne mord plus sur son nom.
+- Le son n'attend plus les effets : pendant un changement d'effet, un bloc passe sans effet plutôt qu'en retard.
 
 ## v0.28 : motion recording, un effet par piste, bandeau des projets, export
 - **Un effet par piste** (page Effets) : une rangée de pistes en haut du pad (TOUT, ÉMU, FM-1, puis chaque boucle) ;

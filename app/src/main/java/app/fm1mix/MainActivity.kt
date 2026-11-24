@@ -30,7 +30,7 @@ import java.security.MessageDigest
  * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
 /** shown in About and in error reports; keep in step with versionName (app/build.gradle.kts) */
-const val APP_VERSION = "0.28"
+const val APP_VERSION = "0.28.2"
 
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView

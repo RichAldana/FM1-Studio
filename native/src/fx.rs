@@ -306,17 +306,68 @@ pub fn tap() -> f32 {
 }
 
 /// The engine's MIDI router: a clock tick, a start (the beat back to 0).
-pub fn clock_tick() {
-    let t = now_ns();
-    let last = CLOCK_LAST_NS.swap(t, Relaxed);
-    if last != 0 && t > last {
-        let d = t - last;
-        let p = CLOCK_PERIOD_NS.load(Relaxed);
-        // smoothed over a beat or so; a jump of more than half (a new tempo, a restart) taken at once
-        let np = if p == 0 || d > p * 3 / 2 || d < p / 2 { d } else { (p * 23 + d) / 24 };
-        CLOCK_PERIOD_NS.store(np, Relaxed);
+pub fn clock_tick() { clock_tick_at(now_ns()) }
+
+/// The clock's last ticks, as they arrived: the tempo is their trend (CLOCK_WINDOW ticks, 4 beats), never one gap.
+/// Android hands USB MIDI over in bunches: several ticks within a millisecond, then a long gap. Measured tick to tick
+/// (before 0.28.1) that made tens of thousands of BPM, jumping; over beats the bunches cancel out.
+#[derive(Default)]
+struct ClockEst { times: std::collections::VecDeque<u64>, last: u64 }
+static CLOCK_EST: Mutex<Option<ClockEst>> = Mutex::new(None);
+const CLOCK_WINDOW: usize = 96;
+/// ticks enough for a first tempo (a beat), and the time they must span (bunches: a few ms each)
+const CLOCK_FIRST: usize = 24;
+const CLOCK_MIN_SPAN_NS: u64 = 120_000_000;
+
+/// the least-squares slope of q[from..] against its index: ns a tick
+fn slope(q: &std::collections::VecDeque<u64>, from: usize) -> f64 {
+    let n = (q.len() - from) as f64;
+    let t0 = q[from];
+    let mi = (n - 1.0) / 2.0;
+    let mt = q.iter().skip(from).map(|&t| (t - t0) as f64).sum::<f64>() / n;
+    let (mut num, mut den) = (0.0, 0.0);
+    for (i, &t) in q.iter().skip(from).enumerate() {
+        let di = i as f64 - mi;
+        num += di * ((t - t0) as f64 - mt);
+        den += di * di;
     }
+    if den > 0.0 { num / den } else { 0.0 }
+}
+
+impl ClockEst {
+    /// a tick at `t` (ns): the period now (ns a tick), when there is one
+    fn tick(&mut self, t: u64) -> Option<f64> {
+        let last = std::mem::replace(&mut self.last, t);
+        let q = &mut self.times;
+        // the clock stopped a while (a second): a new run, maybe at another tempo
+        if last == 0 || t < last || t - last > 1_000_000_000 { q.clear(); }
+        q.push_back(t);
+        while q.len() > CLOCK_WINDOW + 1 { q.pop_front(); }
+        let n = q.len();
+        if n < CLOCK_FIRST + 1 || q[n - 1] - q[0] < CLOCK_MIN_SPAN_NS { return None; }
+        // the period: the slope of the arrival times against the ticks' numbers, over every tick of the window (a
+        // bunch moves a few points a little; the first and the last alone would move the result by a whole bunch)
+        let avg = slope(q, 0);
+        // a new tempo: the last beat against the window, off by more than 8 %: the window starts again there
+        if n > 25 {
+            let recent = slope(q, n - 25);
+            if (recent / avg - 1.0).abs() > 0.08 {
+                let keep = q.split_off(n - 25);
+                *q = keep;
+                return Some(recent);
+            }
+        }
+        // (30 to 400 BPM: anything else is not a tempo)
+        let bpm = 60e9 / (avg * 24.0);
+        if (30.0..=400.0).contains(&bpm) { Some(avg) } else { None }
+    }
+}
+
+fn clock_tick_at(t: u64) {
+    CLOCK_LAST_NS.store(t, Relaxed);
     CLOCK_PULSES.fetch_add(1, Relaxed);
+    let mut g = CLOCK_EST.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(p) = g.get_or_insert_with(ClockEst::default).tick(t) { CLOCK_PERIOD_NS.store(p as u64, Relaxed); }
 }
 pub fn clock_start() { CLOCK_PULSES.store(0, Relaxed); }
 
@@ -1000,5 +1051,37 @@ mod each_alone {
                 fx_free(h);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+
+    /// 120 BPM (24 ticks a beat: 20.833 ms each), handed over in bunches of 6 (as Android's USB MIDI): the tempo shown
+    /// stays at 120, never jumps
+    #[test]
+    fn bunched_ticks_give_a_steady_tempo() {
+        let mut c = ClockEst::default();
+        let bpm = |p: Option<f64>| p.map(|p| 60e9 / (p * 24.0));
+        let period = 60e9 / (120.0 * 24.0);
+        let (mut early, mut settled) = (Vec::new(), Vec::new());
+        let mut cur = None;
+        for i in 0..24 * 16u64 {
+            // ticks 0..5 all arrive at tick 5's time (+ a little jitter)
+            let due = ((i / 6) * 6 + 5) as f64 * period + 1e9;
+            if let Some(b) = bpm(c.tick(due as u64 + (i % 6) * 20_000)) { cur = Some(b) }
+            if let Some(b) = cur { if i > 120 { settled.push(b) } else { early.push(b) } }
+        }
+        let range = |v: &Vec<f64>| v.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+        let (lo, hi) = range(&early);
+        assert!(lo > 115.0 && hi < 125.0, "first beats: {lo} to {hi}");
+        let (lo, hi) = range(&settled);
+        assert!(lo > 119.0 && hi < 121.0, "then: {lo} to {hi}");
+        // and a new tempo is followed within a couple of beats
+        let p2 = 60e9 / (90.0 * 24.0);
+        let t0 = 1e9 + 24.0 * 17.0 * period;
+        for i in 0..24 * 4u64 { if let Some(b) = bpm(c.tick((t0 + i as f64 * p2) as u64)) { cur = Some(b) } }
+        assert!((cur.unwrap() - 90.0).abs() < 1.0, "{cur:?}");
     }
 }
