@@ -29,6 +29,9 @@ import java.security.MessageDigest
  * one the keyboard or the mixer (MixerView). The first time, no firmware: the user picks one in the catalogue; then the machine powers
  * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
+/** shown in About and in error reports; keep in step with versionName (app/build.gradle.kts) */
+const val APP_VERSION = "0.17.2"
+
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView
     private lateinit var fwName: TextView
@@ -130,6 +133,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
+        catchCrashes()
+        Native.loadError?.let { showFatal("Le moteur de l'app (libfm1mix.so) ne se charge pas sur ce téléphone.", it); return }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         firmware = prefs.getString("firmware", DEFAULT_FW) ?: DEFAULT_FW
         if (firmware.startsWith("asset:")) firmware = "cat:chordism"      // (0.9 and before: Chordism built in)
@@ -185,6 +190,64 @@ class MainActivity : ComponentActivity() {
             insets
         }
         setContentView(root)
+        lastCrash()?.let { showCrash(it) }
+    }
+
+    private val crashFile get() = File(filesDir, "crash.txt")
+
+    /** an uncaught error is written to crash.txt before Android closes the app; the next opening shows it */
+    private fun catchCrashes() {
+        val before = Thread.getDefaultUncaughtExceptionHandler()
+        if (before is CrashKeeper) return
+        Thread.setDefaultUncaughtExceptionHandler(CrashKeeper(crashFile, before))
+    }
+
+    private class CrashKeeper(val file: File, val next: Thread.UncaughtExceptionHandler?) : Thread.UncaughtExceptionHandler {
+        override fun uncaughtException(t: Thread, e: Throwable) {
+            runCatching {
+                val sw = java.io.StringWriter()
+                e.printStackTrace(java.io.PrintWriter(sw))
+                file.writeText("FM1 Mix ${APP_VERSION}, Android ${android.os.Build.VERSION.RELEASE} " +
+                    "(${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}), fil ${t.name}\n$sw")
+            }
+            next?.uncaughtException(t, e)
+        }
+    }
+
+    private fun lastCrash(): String? = runCatching {
+        crashFile.takeIf { it.exists() }?.let { f -> f.readText().also { f.delete() } }
+    }.getOrNull()
+
+    private fun copyText(label: String, text: String) {
+        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+        Toast.makeText(this, "Copié", Toast.LENGTH_SHORT).show()
+    }
+
+    /** the last opening crashed: what happened, to copy and send */
+    private fun showCrash(report: String) {
+        AlertDialog.Builder(this)
+            .setTitle("L'app s'est fermée la dernière fois")
+            .setMessage("Voici l'erreur. « Copier » la met dans le presse-papiers, pour l'envoyer.\n\n" + report.take(3000))
+            .setPositiveButton("Copier") { _, _ -> copyText("FM1 Mix erreur", report) }
+            .setNegativeButton("Fermer", null)
+            .show()
+    }
+
+    /** the app can't run at all: say why on screen instead of closing */
+    private fun showFatal(what: String, detail: String) {
+        val text = "$what\n\nFM1 Mix ${APP_VERSION}, Android ${android.os.Build.VERSION.RELEASE} " +
+            "(${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, ${android.os.Build.SUPPORTED_ABIS.joinToString()})\n\n$detail"
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF1E1F22.toInt()); setPadding(dp(20), dp(48), dp(20), dp(20))
+        }
+        box.addView(TextView(this).apply { this.text = text; textSize = 14f; setTextColor(Color.WHITE); setTextIsSelectable(true) })
+        box.addView(TextView(this).apply {
+            this.text = "Copier l'erreur"; textSize = 16f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
+            background = pill(0xFF4A4B50.toInt(), 0, dp(20)); setPadding(0, dp(12), 0, dp(12))
+            setOnClickListener { copyText("FM1 Mix erreur", text) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
+        setContentView(android.widget.ScrollView(this).apply { addView(box) })
     }
 
     private fun topBar(): View {
@@ -1052,7 +1115,7 @@ class MainActivity : ComponentActivity() {
 
     private fun Sheet.Page.aboutPage() {
         group()
-        text("FM1 Mix 0.17, bêta. Un FM-1 émulé sur le téléphone, mixé avec un vrai FM-1 en USB, enregistré, découpé.")
+        text("FM1 Mix $APP_VERSION, bêta. Un FM-1 émulé sur le téléphone, mixé avec un vrai FM-1 en USB, enregistré, découpé.")
         group("Licences")
         info("FM1 Mix", "GPL-3.0")
         info("Émulateur fm1-emu", "MIT · Joakim Eriksson")
