@@ -12,16 +12,22 @@ fn main() {
         .flag_if_supported("-Wno-unused-function")
         .opt_level(3);
     if target.contains("android") {
-        // one library, so the C++ runtime goes in statically (the NDK's c++_static and its c++abi)
+        // one library, so the C++ runtime goes in statically: the NDK's c++_static, then its c++abi
+        b.cpp_link_stdlib(Some("c++_static"));
+    }
+    // compile() declares fxengine then c++_static to the linker; c++abi has to come after both (a static library
+    // only gives what was asked for before it), or the .so is left with holes and won't load on the phone
+    b.compile("fxengine");
+    if target.contains("android") {
         // rustc looks for a "static=" library itself and doesn't know the NDK's folders, so c++abi goes to the
         // linker (NDK clang) as a plain -lc++abi: there is only libc++abi.a, so that is what it takes.
-        b.cpp_link_stdlib(Some("c++_static"));
         if let Some(dir) = ndk_lib_dir(&target) {
             println!("cargo:rustc-link-search=native={}", dir.display());
         }
         println!("cargo:rustc-link-lib=c++abi");
+        // a symbol nobody provides fails the build here instead of the app on the phone
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--no-undefined");
     }
-    b.compile("fxengine");
     println!("cargo:rerun-if-changed=fx");
 }
 
