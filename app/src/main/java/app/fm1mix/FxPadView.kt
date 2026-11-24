@@ -42,6 +42,13 @@ class FxCatalog(json: String, list: String) {
     }
 
     fun ofType(t: String) = all.filter { it.type == t }
+
+    companion object {
+        /** the profiles' names (fx_profiles.json, in French) as shown: in English when the phone is not in French */
+        private val EN = mapOf("Filtre Moog" to "Moog filter", "Écho" to "Echo", "Nuage diffus" to "Diffuse cloud",
+            "Pompe" to "Pump", "Filtre" to "Filter", "Distorsion" to "Distortion", "Dynamique" to "Dynamics")
+        fun shown(s: String) = if (Lang.fr) s else EN[s] ?: s
+    }
 }
 
 object FxState {
@@ -62,12 +69,12 @@ object FxState {
         views.forEach { it.invalidate() }
     }
 
-    val TARGETS = arrayOf("TOUT", "ÉMULÉ", "FM-1")
+    val TARGETS = arrayOf(tr("TOUT", "ALL"), tr("ÉMULÉ", "EMULATED"), "FM-1")
     /** the axes' names in the profiles' parameters, for the pad's edges */
-    val NAMES = mapOf("cutoff" to "fréquence", "res" to "résonance", "time" to "temps", "feedback" to "répétitions",
-        "t60" to "durée", "mix" to "mélange", "size" to "taille", "diffusion" to "diffusion", "speed" to "vitesse",
-        "depth" to "profondeur", "drive" to "saturation", "tone" to "tonalité", "shift" to "hauteur",
-        "fall" to "chute", "length" to "longueur", "decay" to "déclin", "thresh" to "seuil", "ratio" to "ratio")
+    val NAMES = mapOf("cutoff" to tr("fréquence", "cutoff"), "res" to tr("résonance", "resonance"), "time" to tr("temps", "time"), "feedback" to tr("répétitions", "feedback"),
+        "t60" to tr("durée", "decay time"), "mix" to tr("mélange", "mix"), "size" to tr("taille", "size"), "diffusion" to "diffusion", "speed" to tr("vitesse", "speed"),
+        "depth" to tr("profondeur", "depth"), "drive" to tr("saturation", "drive"), "tone" to tr("tonalité", "tone"), "shift" to tr("hauteur", "pitch"),
+        "fall" to tr("chute", "fall"), "length" to tr("longueur", "length"), "decay" to tr("déclin", "decay"), "thresh" to tr("seuil", "threshold"), "ratio" to "ratio")
 }
 
 /**
@@ -148,10 +155,10 @@ class FxPadView(ctx: Context) : View(ctx) {
             c.drawText("$yn →", pad.left + 14f * d, pad.centerY(), p)
             c.restore()
             p.textSize = 13f * d; p.typeface = Typeface.DEFAULT_BOLD; p.color = 0xFFB8B5AE.toInt(); p.textAlign = Paint.Align.LEFT
-            c.drawText(cur.label, pad.left + 14f * d, pad.top + 22f * d, p)
+            c.drawText(FxCatalog.shown(cur.label), pad.left + 14f * d, pad.top + 22f * d, p)
         } else {
             p.textAlign = Paint.Align.CENTER; p.textSize = 13f * d
-            c.drawText("Choisis un effet en dessous", pad.centerX(), pad.centerY(), p)
+            c.drawText(tr("Choisis un effet en dessous", "Pick an effect below"), pad.centerX(), pad.centerY(), p)
         }
         val px = pad.left + fx * pad.width()
         val py = pad.bottom - fy * pad.height()
@@ -172,7 +179,7 @@ class FxPadView(ctx: Context) : View(ctx) {
             // row 1: the types
             c.save(); c.clipRect(0f, rowTop(0), w, rowTop(0) + rh)
             var x = 12f * d - scroll[0]
-            for (t in cat.types) x = chip(c, x, rowTop(0) + (rh - ch) / 2f, ch, t.uppercase(), t == s.type, true) {
+            for (t in cat.types) x = chip(c, x, rowTop(0) + (rh - ch) / 2f, ch, FxCatalog.shown(t).uppercase(), t == s.type, true) {
                 s.type = t
                 val first = cat.ofType(t).firstOrNull()
                 if (cur?.type != t && first != null) s.selected = first.index
@@ -183,7 +190,7 @@ class FxPadView(ctx: Context) : View(ctx) {
             // row 2: the effects of that type
             c.save(); c.clipRect(0f, rowTop(1), w, rowTop(1) + rh)
             x = 12f * d - scroll[1]
-            for (e in cat.ofType(s.type)) x = chip(c, x, rowTop(1) + (rh - ch) / 2f, ch, e.label, e.index == s.selected, true) {
+            for (e in cat.ofType(s.type)) x = chip(c, x, rowTop(1) + (rh - ch) / 2f, ch, FxCatalog.shown(e.label), e.index == s.selected, true) {
                 s.selected = if (s.selected == e.index) -1 else e.index   // (a second tap: no effect)
                 s.onChange?.invoke(); s.send()
             }
@@ -205,7 +212,7 @@ class FxPadView(ctx: Context) : View(ctx) {
         p.color = if (info[2] > 0.5f) amber else 0xFFB8B5AE.toInt()
         c.drawText("%.0f BPM".format(info[0]), w - 18f * d - tapW, y3 + ch / 2f - 1f * d, p)
         p.color = 0xFF8E8C87.toInt(); p.textSize = 9.5f * d
-        c.drawText(if (info[2] > 0.5f) "horloge MIDI" else "tempo interne", w - 18f * d - tapW, y3 + ch / 2f + 11f * d, p)
+        c.drawText(if (info[2] > 0.5f) tr("horloge MIDI", "MIDI clock") else tr("tempo interne", "internal tempo"), w - 18f * d - tapW, y3 + ch / 2f + 11f * d, p)
         postInvalidateDelayed(if (down) 16 else 250)
     }
 

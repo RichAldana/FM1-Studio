@@ -10,8 +10,8 @@ android {
         applicationId = "app.fm1mix"
         minSdk = 31
         targetSdk = 35
-        versionCode = 20
-        versionName = "0.17.2"
+        versionCode = 24
+        versionName = "0.20"
         ndk { abiFilters += "arm64-v8a" }
     }
     // a fixed debug key, so that a new build installs over the previous one
@@ -38,4 +38,3 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.2")
 }
-

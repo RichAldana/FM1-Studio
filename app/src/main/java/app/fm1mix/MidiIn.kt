@@ -12,6 +12,8 @@ import android.os.Handler
 class MidiIn(ctx: Context) {
     @Volatile var lastClockMs = 0L
     @Volatile var clockCount = 0L
+    /** OCT- (-1) or OCT+ (+1) pressed on a plugged FM-1 lending its panel (PANEL MIDI: note 0 / 1 on channel 15) */
+    var onPanelOct: ((Int) -> Unit)? = null
 
     private val mm = ctx.getSystemService(Context.MIDI_SERVICE) as MidiManager
     private val devices = mutableListOf<MidiDevice>()
@@ -22,7 +24,11 @@ class MidiIn(ctx: Context) {
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
             val n = minOf(count, tmp.size)
             System.arraycopy(msg, offset, tmp, 0, n)
-            for (i in 0 until n) if (tmp[i] == 0xF8.toByte()) { clockCount++; lastClockMs = System.currentTimeMillis() }
+            for (i in 0 until n) {
+                if (tmp[i] == 0xF8.toByte()) { clockCount++; lastClockMs = System.currentTimeMillis() }
+                else if (tmp[i] == 0x9E.toByte() && i + 2 < n && tmp[i + 2] > 0 && (tmp[i + 1] == 0.toByte() || tmp[i + 1] == 1.toByte()))
+                    onPanelOct?.invoke(if (tmp[i + 1] == 0.toByte()) -1 else 1)
+            }
             Native.midi(tmp, n)
         }
     }

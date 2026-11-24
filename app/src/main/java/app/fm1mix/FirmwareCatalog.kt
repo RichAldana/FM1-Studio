@@ -57,7 +57,7 @@ object FirmwareCatalog {
     /** Firmwares neither list has yet: their author's own release. */
     val EXTRAS = listOf(
         Entry("chordism", "Chordism", "0.9", "Charles Vestal", "MPL-2.0",
-            "Un synthé d'accords : chaque touche joue un accord de quatre voix, avec arpégiateur. Le firmware de départ de FM1 Mix.",
+            tr("Un synthé d'accords : chaque touche joue un accord de quatre voix, avec arpégiateur. Le firmware de départ de FM1 Mix.", "A chord synth: each key plays a four-voice chord, with an arpeggiator. FM1 Mix's first firmware."),
             "https://github.com/charlesvestal/fm1-chordism/releases/download/v0.9/chordism-0.9.fwsc",
             "https://github.com/charlesvestal/fm1-chordism", null, null, false, null, null,
             "bb7b055f45ec3e8dc0cf2b5f9a79298dec0ec398f3131c3de90eb570fdc4d7a2", 616059L, "synth", extra = true)

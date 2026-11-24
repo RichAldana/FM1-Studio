@@ -10,7 +10,8 @@
     <application
         android:label="FM1 Mix"
         android:theme="@android:style/Theme.Material.NoActionBar"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:localeConfig="@xml/locales_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -68,11 +68,11 @@ class FirmwareStore(private val dir: File, private val bundled: () -> String) {
         var got = 0
         val errors = ArrayList<String>()
         runCatching { val t = fetch(FirmwareCatalog.FM1EMU_URL); FirmwareCatalog.parseFm1emu(t); writeSafely(fm1emuCache, t); got++ }
-            .onFailure { errors += "liste de fm1-emu : ${it.message}" }
-        runCatching { val t = fetch(FirmwareCatalog.HUB_URL); if (FirmwareCatalog.parseHub(t).isEmpty()) throw Json.Bad("vide"); writeSafely(hubCache, t); got++ }
-            .onFailure { errors += "catalogue du Hub : ${it.message}" }
+            .onFailure { errors += tr("liste de fm1-emu : ${it.message}", "fm1-emu list: ${it.message}") }
+        runCatching { val t = fetch(FirmwareCatalog.HUB_URL); if (FirmwareCatalog.parseHub(t).isEmpty()) throw Json.Bad(tr("vide", "empty")); writeSafely(hubCache, t); got++ }
+            .onFailure { errors += tr("catalogue du Hub : ${it.message}", "Hub catalogue: ${it.message}") }
         if (got > 0) writeSafely(stamp, now.toString())
-        return if (errors.isEmpty()) "Liste à jour" else if (got > 0) "Liste à jour en partie (${errors.joinToString("; ")})" else "Pas de réseau : liste gardée (${errors.joinToString("; ")})"
+        return if (errors.isEmpty()) tr("Liste à jour", "List up to date") else if (got > 0) tr("Liste à jour en partie (${errors.joinToString("; ")})", "List partly updated (${errors.joinToString("; ")})") else tr("Pas de réseau : liste gardée (${errors.joinToString("; ")})", "No network: list kept (${errors.joinToString("; ")})")
     }
 
     private fun writeSafely(f: File, text: String) {
@@ -116,7 +116,7 @@ class FirmwareStore(private val dir: File, private val bundled: () -> String) {
      * the same firmware removed. [progress] gets (bytes, total or -1).
      */
     fun download(e: FirmwareCatalog.Entry, progress: (Long, Long) -> Unit = { _, _ -> }, opener: (String) -> Pair<InputStream, Long> = ::open): Installed {
-        val url = e.pkg ?: throw Bad("${e.name} : aucun paquet à télécharger")
+        val url = e.pkg ?: throw Bad(tr("${e.name} : aucun paquet à télécharger", "${e.name}: no package to download"))
         val safe = e.id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
         val ver = e.version.filter { it.isLetterOrDigit() || it == '.' || it == '-' }
         val tmp = File(pkgDir, "$safe.part")
@@ -129,18 +129,18 @@ class FirmwareStore(private val dir: File, private val bundled: () -> String) {
                     val k = s.read(b)
                     if (k < 0) break
                     n += k
-                    if (n > MAX_BYTES) throw Bad("${e.name} : paquet trop gros")
+                    if (n > MAX_BYTES) throw Bad(tr("${e.name} : paquet trop gros", "${e.name}: package too big"))
                     o.write(b, 0, k)
                     progress(n, len)
                 }
             }
         }
-        if (n == 0L) { tmp.delete(); throw Bad("${e.name} : paquet vide") }
+        if (n == 0L) { tmp.delete(); throw Bad(tr("${e.name} : paquet vide", "${e.name}: empty package")) }
         val sum = sha256(tmp)
-        if (e.sha256 != null && e.sha256 != sum) { tmp.delete(); throw Bad("${e.name} : le paquet reçu n'est pas celui du catalogue (SHA-256)") }
+        if (e.sha256 != null && e.sha256 != sum) { tmp.delete(); throw Bad(tr("${e.name} : le paquet reçu n'est pas celui du catalogue (SHA-256)", "${e.name}: the package received is not the catalogue's (SHA-256)")) }
         val dst = File(pkgDir, "$safe-$ver.fwsc")
         dst.delete()
-        if (!tmp.renameTo(dst)) throw Bad("${e.name} : rangement impossible")
+        if (!tmp.renameTo(dst)) throw Bad(tr("${e.name} : rangement impossible", "${e.name}: could not be stored"))
         val m = readIndex()
         m[e.id]?.let { old -> if (old.file != dst) old.file.delete() }
         val inst = Installed(e.id, e.version, dst, sum)

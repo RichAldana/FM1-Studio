@@ -31,7 +31,7 @@ object WavIO {
     fun read(bytes: ByteArray): Sound {
         val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         fun tag(o: Int) = String(bytes, o, 4, Charsets.US_ASCII)
-        if (bytes.size < 12 || tag(0) != "RIFF" || tag(8) != "WAVE") throw Bad("pas un fichier WAV")
+        if (bytes.size < 12 || tag(0) != "RIFF" || tag(8) != "WAVE") throw Bad(tr("pas un fichier WAV", "not a WAV file"))
         var fmt = -1
         var data = -1
         var dataLen = 0
@@ -44,8 +44,8 @@ object WavIO {
             i += 8 + n.toInt() + (n.toInt() and 1)
             if (n > bytes.size) break
         }
-        if (fmt < 0) throw Bad("WAV sans bloc fmt")
-        if (data < 0) throw Bad("WAV sans données")
+        if (fmt < 0) throw Bad(tr("WAV sans bloc fmt", "WAV without a fmt chunk"))
+        if (data < 0) throw Bad(tr("WAV sans données", "WAV without data"))
         var format = b.getShort(fmt).toInt() and 0xFFFF
         val ch = b.getShort(fmt + 2).toInt() and 0xFFFF
         val rate = b.getInt(fmt + 4)
@@ -53,8 +53,8 @@ object WavIO {
         if (format == 0xFFFE) format = b.getShort(fmt + 24).toInt() and 0xFFFF
         val bps = bits / 8
         val float = format == 3
-        if ((format != 1 && format != 3) || bps == 0 || ch == 0) throw Bad("WAV non pris en charge (format $format, $bits bits)")
-        if (float && bps != 4 && bps != 8) throw Bad("WAV flottant de $bits bits")
+        if ((format != 1 && format != 3) || bps == 0 || ch == 0) throw Bad(tr("WAV non pris en charge (format $format, $bits bits)", "unsupported WAV (format $format, $bits bits)"))
+        if (float && bps != 4 && bps != 8) throw Bad(tr("WAV flottant de $bits bits", "$bits-bit float WAV"))
         val frames = dataLen / (bps * ch)
         val out = FloatArray(frames * ch)
         var p = data

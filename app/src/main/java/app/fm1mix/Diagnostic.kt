@@ -19,34 +19,34 @@ import android.os.Build
  */
 object Diagnostic {
     private fun typeName(t: Int): String = when (t) {
-        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "micro intégré"
-        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "haut-parleur"
-        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "écouteur"
-        AudioDeviceInfo.TYPE_TELEPHONY -> "téléphonie"
-        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB (appareil)"
-        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB (casque)"
-        AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB (accessoire)"
+        AudioDeviceInfo.TYPE_BUILTIN_MIC -> tr("micro intégré", "built-in mic")
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> tr("haut-parleur", "speaker")
+        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> tr("écouteur", "earpiece")
+        AudioDeviceInfo.TYPE_TELEPHONY -> tr("téléphonie", "telephony")
+        AudioDeviceInfo.TYPE_USB_DEVICE -> tr("USB (appareil)", "USB (device)")
+        AudioDeviceInfo.TYPE_USB_HEADSET -> tr("USB (casque)", "USB (headset)")
+        AudioDeviceInfo.TYPE_USB_ACCESSORY -> tr("USB (accessoire)", "USB (accessory)")
         AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth A2DP"
         AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth SCO"
         AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE"
-        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "casque filaire"
-        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "écouteurs filaires"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> tr("casque filaire", "wired headphones")
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> tr("écouteurs filaires", "wired earphones")
         AudioDeviceInfo.TYPE_REMOTE_SUBMIX -> "remote submix"
         else -> "type $t"
     }
 
-    private fun subclass(s: Int): String = when (s) { 1 -> "contrôle"; 2 -> "flux audio"; 3 -> "MIDI"; else -> "sous-classe $s" }
+    private fun subclass(s: Int): String = when (s) { 1 -> tr("contrôle", "control"); 2 -> tr("flux audio", "audio stream"); 3 -> "MIDI"; else -> tr("sous-classe $s", "subclass $s") }
 
     fun report(ctx: Context): String {
         val out = StringBuilder()
-        out.append("Téléphone : ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n")
+        out.append(tr("Téléphone : ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n", "Phone: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n"))
         val mic = ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        out.append("Autorisation micro : ${if (mic) "accordée" else "REFUSÉE (la capture USB en a besoin)"}\n")
+        out.append(tr("Autorisation micro : ${if (mic) "accordée" else "REFUSÉE (la capture USB en a besoin)"}\n", "Microphone permission: ${if (mic) "granted" else "REFUSED (USB capture needs it)"}\n"))
 
         // 2. the FM-1's own declaration
-        out.append("\n— Ce que le FM-1 déclare en USB —\n")
+        out.append(tr("\n— Ce que le FM-1 déclare en USB —\n", "\n— What the FM-1 declares over USB —\n"))
         val usb = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
-        if (usb.deviceList.isEmpty()) out.append("Aucun appareil USB branché.\n")
+        if (usb.deviceList.isEmpty()) out.append(tr("Aucun appareil USB branché.\n", "No USB device plugged in.\n"))
         for (d in usb.deviceList.values) {
             val name = runCatching { "${d.manufacturerName ?: ""} ${d.productName ?: ""}".trim() }.getOrDefault("")
             out.append("« $name » %04x:%04x, %d interfaces\n".format(d.vendorId, d.productId, d.interfaceCount))
@@ -57,7 +57,7 @@ object Diagnostic {
                 if (f.interfaceClass != UsbConstants.USB_CLASS_AUDIO) continue
                 val eps = (0 until f.endpointCount).map { f.getEndpoint(it) }
                 val desc = eps.joinToString(", ") { e ->
-                    val dir = if (e.direction == UsbConstants.USB_DIR_IN) "vers le téléphone" else "depuis le téléphone"
+                    val dir = if (e.direction == UsbConstants.USB_DIR_IN) tr("vers le téléphone", "to the phone") else tr("depuis le téléphone", "from the phone")
                     val kind = when (e.type) { UsbConstants.USB_ENDPOINT_XFER_ISOC -> "iso"; UsbConstants.USB_ENDPOINT_XFER_BULK -> "bulk"; UsbConstants.USB_ENDPOINT_XFER_INT -> "int"; else -> "ctrl" }
                     "$kind $dir ${e.maxPacketSize} o"
                 }
@@ -65,22 +65,22 @@ object Diagnostic {
                     if (eps.any { it.type == UsbConstants.USB_ENDPOINT_XFER_ISOC && it.direction == UsbConstants.USB_DIR_IN }) audioIn = true
                     if (eps.any { it.type == UsbConstants.USB_ENDPOINT_XFER_ISOC && it.direction == UsbConstants.USB_DIR_OUT }) audioOut = true
                 }
-                out.append("  interface ${f.id} alt ${f.alternateSetting} : ${subclass(f.interfaceSubclass)}${if (desc.isEmpty()) "" else " ($desc)"}\n")
+                out.append(tr("  interface ${f.id} alt ${f.alternateSetting} : ${subclass(f.interfaceSubclass)}${if (desc.isEmpty()) "" else " ($desc)"}\n", "  interface ${f.id} alt ${f.alternateSetting}: ${subclass(f.interfaceSubclass)}${if (desc.isEmpty()) "" else " ($desc)"}\n"))
             }
-            out.append("  ⇒ son du FM-1 vers le téléphone : ${if (audioIn) "déclaré" else "NON déclaré"} ; son du téléphone vers le FM-1 : ${if (audioOut) "déclaré" else "non déclaré"}\n")
+            out.append(tr("  ⇒ son du FM-1 vers le téléphone : ${if (audioIn) "déclaré" else "NON déclaré"} ; son du téléphone vers le FM-1 : ${if (audioOut) "déclaré" else "non déclaré"}\n", "  ⇒ FM-1 sound to the phone: ${if (audioIn) "declared" else "NOT declared"}; phone sound to the FM-1: ${if (audioOut) "declared" else "not declared"}\n"))
         }
 
         // 3. what Android's sound system offers
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        for ((flag, title) in listOf(AudioManager.GET_DEVICES_INPUTS to "entrées", AudioManager.GET_DEVICES_OUTPUTS to "sorties")) {
-            out.append("\n— Android, $title audio —\n")
+        for ((flag, title) in listOf(AudioManager.GET_DEVICES_INPUTS to tr("entrées", "inputs"), AudioManager.GET_DEVICES_OUTPUTS to tr("sorties", "outputs"))) {
+            out.append(tr("\n— Android, $title audio —\n", "\n— Android, audio $title —\n"))
             for (a in am.getDevices(flag)) {
                 val ch = a.channelCounts.joinToString(",").ifEmpty { "?" }
                 val sr = a.sampleRates.joinToString(",").ifEmpty { "?" }
-                out.append("${typeName(a.type)} « ${a.productName} » canaux $ch, Hz $sr\n")
+                out.append(tr("${typeName(a.type)} « ${a.productName} » canaux $ch, Hz $sr\n", "${typeName(a.type)} \"${a.productName}\" channels $ch, Hz $sr\n"))
             }
         }
-        out.append("\nPropriété UNPROCESSED : ${am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)}\n")
+        out.append(tr("\nPropriété UNPROCESSED : ${am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)}\n", "\nUNPROCESSED property: ${am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)}\n"))
         return out.toString()
     }
 }

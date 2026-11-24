@@ -64,7 +64,7 @@ class SlicerActivity : ComponentActivity() {
     private lateinit var snapBox: CheckBox
     private lateinit var levelBox: CheckBox
     private val prefs by lazy { getSharedPreferences("fm1mix", MODE_PRIVATE) }
-    private val divs = listOf("1 mesure" to 4.0, "1/2" to 2.0, "1/4" to 1.0, "1/8" to 0.5, "1/16" to 0.25)
+    private val divs = listOf(tr("1 mesure", "1 bar") to 4.0, "1/2" to 2.0, "1/4" to 1.0, "1/8" to 0.5, "1/16" to 0.25)
 
     // playback
     private var track: AudioTrack? = null
@@ -91,10 +91,10 @@ class SlicerActivity : ComponentActivity() {
         bar.addView(btn("←") { finish() })
         title = TextView(this).apply {
             textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(dp(8), 0, dp(8), 0); text = "DÉCOUPE"
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(dp(8), 0, dp(8), 0); text = tr("DÉCOUPE", "SLICE")
         }
         bar.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(btn("Ouvrir") { chooseFile() })
+        bar.addView(btn(tr("Ouvrir", "Open")) { chooseFile() })
         root.addView(bar)
         info = TextView(this).apply { textSize = 11f; setTextColor(DIM); setPadding(dp(14), 0, dp(14), dp(4)) }
         root.addView(info)
@@ -103,54 +103,54 @@ class SlicerActivity : ComponentActivity() {
 
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(6), dp(12), dp(24)) }
         // listen and tap
-        snapBox = CheckBox(this).apply { text = "caler"; isChecked = true; setTextColor(INK) }
-        col.addView(row(btn("▶ Tout") { playAll() }, btn("■") { stopPlay() }, btn("TAP") { tap() }, snapBox, btn("Effacer") { edit { it.clear() } }))
-        col.addView(hint("TAP pendant l'écoute : un repère sur le coup entendu (« caler » le met sur l'attaque la plus proche). " +
-            "Toucher la forme d'onde : choisir et écouter un morceau ; appui long : le garder ou l'écarter."))
+        snapBox = CheckBox(this).apply { text = tr("caler", "snap"); isChecked = true; setTextColor(INK) }
+        col.addView(row(btn(tr("▶ Tout", "▶ All")) { playAll() }, btn("■") { stopPlay() }, btn("TAP") { tap() }, snapBox, btn(tr("Effacer", "Erase")) { edit { it.clear() } }))
+        col.addView(hint(tr("TAP pendant l'écoute : un repère sur le coup entendu (« caler » le met sur l'attaque la plus proche). ", "TAP while listening: a marker on the beat heard (\"snap\" puts it on the nearest attack). ") +
+            tr("Toucher la forme d'onde : choisir et écouter un morceau ; appui long : le garder ou l'écarter.", "Tap the waveform: pick and hear a slice; long press: keep it or drop it.")))
         // hits
         sensBar = SeekBar(this).apply { max = 9; progress = prefs.getInt("chopSens", 5) - 1 }
-        col.addView(row(btn("Attaques") { edit { it.detect(sensBar.progress + 1) }; prefs.edit().putInt("chopSens", sensBar.progress + 1).apply() },
-            label("sensibilité"), sensBar))
+        col.addView(row(btn(tr("Attaques", "Attacks")) { edit { it.detect(sensBar.progress + 1) }; prefs.edit().putInt("chopSens", sensBar.progress + 1).apply() },
+            label(tr("sensibilité", "sensitivity")), sensBar))
         // grid
         bpmField = number(prefs.getString("chopBpm", "120") ?: "120", true)
         divSpin = Spinner(this).apply {
             adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, divs.map { it.first })
             setSelection(prefs.getInt("chopDiv", 2))
         }
-        col.addView(row(btn("Grille") { grid() }, bpmField, label("BPM"), divSpin))
+        col.addView(row(btn(tr("Grille", "Grid")) { grid() }, bpmField, label("BPM"), divSpin))
         // equal parts
         partsField = number(prefs.getString("chopParts", "8") ?: "8", false)
-        col.addView(row(btn("Parts égales") { parts() }, partsField, label("morceaux")))
-        col.addView(hint("Grille et parts égales vont du premier au dernier repère quand il y en a deux, sinon du premier (ou du début) à la fin."))
+        col.addView(row(btn(tr("Parts égales", "Equal parts")) { parts() }, partsField, label(tr("morceaux", "slices"))))
+        col.addView(hint(tr("Grille et parts égales vont du premier au dernier repère quand il y en a deux, sinon du premier (ou du début) à la fin.", "Grid and equal parts go from the first marker to the last when there are two, else from the first (or the start) to the end.")))
 
         // the selected chop
         selInfo = TextView(this).apply { setTextColor(INK); textSize = 14f }
         keepBox = CheckBox(this).apply {
-            text = "garder"; setTextColor(INK)
+            text = tr("garder", "keep"); setTextColor(INK)
             setOnClickListener { val m = model ?: return@setOnClickListener; if (m.sel >= 0) { m.toggleKeep(m.sel); refresh() } }
         }
-        col.addView(section("Morceau choisi"))
-        col.addView(row(selInfo, keepBox, btn("▶") { playSel() }, btn("✕ repère") { edit { it.removeSelected() } }))
+        col.addView(section(tr("Morceau choisi", "Chosen slice")))
+        col.addView(row(selInfo, keepBox, btn("▶") { playSel() }, btn(tr("✕ repère", "✕ marker")) { edit { it.removeSelected() } }))
 
         // export
-        col.addView(section("Exporter"))
-        levelBox = CheckBox(this).apply { text = "niveau commun (le plus fort à -0,8 dB, écarts gardés, comme SLOOP)"; isChecked = prefs.getBoolean("chopLevel", true); setTextColor(INK) }
+        col.addView(section(tr("Exporter", "Export")))
+        levelBox = CheckBox(this).apply { text = tr("niveau commun (le plus fort à -0,8 dB, écarts gardés, comme SLOOP)", "common level (the loudest at -0.8 dB, differences kept, like SLOOP)"); isChecked = prefs.getBoolean("chopLevel", true); setTextColor(INK) }
         col.addView(levelBox)
-        col.addView(row(btn("Morceaux gardés → WAV") { exportPieces() }, btn("Boucle → WAV") { exportLoop() }))
-        col.addView(hint("Dans Musique/${Recorder.FOLDER}/Découpes, au format de l'enregistrement (fréquence, canaux, résolution)."))
+        col.addView(row(btn(tr("Morceaux gardés → WAV", "Kept slices → WAV")) { exportPieces() }, btn(tr("Boucle → WAV", "Loop → WAV")) { exportLoop() }))
+        col.addView(hint(tr("Dans Musique/${Recorder.FOLDER}/Découpes, au format de l'enregistrement (fréquence, canaux, résolution).", "In Music/${Recorder.FOLDER}/Découpes, in the recording's format (rate, channels, resolution).")))
 
         // the FM-1
-        col.addView(section("Vers le FM-1"))
-        fwInfo = TextView(this).apply { setTextColor(INK); textSize = 13f; text = "Recherche du firmware…" }
+        col.addView(section(tr("Vers le FM-1", "To the FM-1")))
+        fwInfo = TextView(this).apply { setTextColor(INK); textSize = 13f; text = tr("Recherche du firmware…", "Looking for the firmware…") }
         col.addView(fwInfo)
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000; visibility = View.GONE }
         col.addView(progress)
         barsField = number("1", false)
         fwBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        fwBox.addView(row(btn("Boucle →") { sendLoop() }, barsField, label("mesures"), btn("Morceaux →") { sendPieces() }))
-        fwBox.addView(row(btn("Annuler le dernier envoi") { restore() }, btn("Rechercher") { detect() }))
+        fwBox.addView(row(btn(tr("Boucle →", "Loop →")) { sendLoop() }, barsField, label(tr("mesures", "bars")), btn(tr("Morceaux →", "Slices →")) { sendPieces() }))
+        fwBox.addView(row(btn(tr("Annuler le dernier envoi", "Undo the last send")) { restore() }, btn(tr("Rechercher", "Search")) { detect() }))
         col.addView(fwBox)
-        col.addView(row(btn("Rechercher le FM-1") { detect() }))
+        col.addView(row(btn(tr("Rechercher le FM-1", "Look for the FM-1")) { detect() }))
 
         root.addView(ScrollView(this).apply { addView(col) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
@@ -191,30 +191,30 @@ class SlicerActivity : ComponentActivity() {
                 }
             }
         }
-        val items = names + "Autre fichier WAV…"
-        AlertDialog.Builder(this).setTitle("Ouvrir un enregistrement")
+        val items = names + tr("Autre fichier WAV…", "Another WAV file…")
+        AlertDialog.Builder(this).setTitle(tr("Ouvrir un enregistrement", "Open a recording"))
             .setItems(items.toTypedArray()) { _, i -> if (i < uris.size) load(uris[i]) else openFile.launch(arrayOf("audio/*")) }
-            .setNegativeButton("Annuler") { _, _ -> if (model == null) finish() }
+            .setNegativeButton(tr("Annuler", "Cancel")) { _, _ -> if (model == null) finish() }
             .show()
     }
 
     private fun displayName(uri: Uri): String {
         runCatching {
             contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) return c.getString(0) ?: "son"
+                if (c.moveToFirst()) return c.getString(0) ?: tr("son", "sound")
             }
         }
-        return uri.lastPathSegment?.substringAfterLast('/') ?: "son"
+        return uri.lastPathSegment?.substringAfterLast('/') ?: tr("son", "sound")
     }
 
     private fun load(uri: Uri) {
         stopPlay()
-        info.text = "Lecture…"
+        info.text = tr("Lecture…", "Reading…")
         Thread {
             val r = runCatching {
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException("illisible")
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException(tr("illisible", "unreadable"))
                 val snd = WavIO.read(bytes)
-                if (snd.frames.toDouble() / snd.rate > MAX_SECONDS) throw IllegalStateException("plus de ${MAX_SECONDS / 60} minutes : découpe d'abord un passage plus court")
+                if (snd.frames.toDouble() / snd.rate > MAX_SECONDS) throw IllegalStateException(tr("plus de ${MAX_SECONDS / 60} minutes : découpe d'abord un passage plus court", "over ${MAX_SECONDS / 60} minutes: slice a shorter part first"))
                 SlicerModel(snd)
             }
             ui.post {
@@ -223,11 +223,11 @@ class SlicerActivity : ComponentActivity() {
                     fileName = displayName(uri).removeSuffix(".wav").removeSuffix(".WAV")
                     title.text = fileName
                     val s = m.sound
-                    info.text = "%.2f s · %d Hz · %s · %s".format(m.seconds, s.rate, if (s.channels == 1) "mono" else "${s.channels} canaux",
-                        if (s.float) "32 bits flottant" else "${s.bits} bits")
+                    info.text = "%.2f s · %d Hz · %s · %s".format(m.seconds, s.rate, if (s.channels == 1) "mono" else tr("${s.channels} canaux", "${s.channels} channels"),
+                        if (s.float) tr("32 bits flottant", "32-bit float") else tr("${s.bits} bits", "${s.bits}-bit"))
                     wave.setModel(m)
                     refresh()
-                }.onFailure { e -> info.text = "Impossible d'ouvrir : ${e.message}" }
+                }.onFailure { e -> info.text = tr("Impossible d'ouvrir : ${e.message}", "Cannot open: ${e.message}") }
             }
         }.start()
     }
@@ -255,7 +255,7 @@ class SlicerActivity : ComponentActivity() {
     private fun tap() {
         val m = model ?: return
         val t = track
-        if (!playing || t == null) { Toast.makeText(this, "TAP pendant l'écoute (▶)", Toast.LENGTH_SHORT).show(); return }
+        if (!playing || t == null) { Toast.makeText(this, tr("TAP pendant l'écoute (▶)", "TAP while listening (▶)"), Toast.LENGTH_SHORT).show(); return }
         m.tap((playFrom + t.playbackHeadPosition).toLong(), snapBox.isChecked)
         refresh()
     }
@@ -268,11 +268,11 @@ class SlicerActivity : ComponentActivity() {
         val k = p.count { !it.off }
         if (m.sel in p.indices) {
             val c = p[m.sel]
-            selInfo.text = "n° %d · %.3f s".format(m.sel + 1, (c.end - c.start).toDouble() / Chop.RATE)
+            selInfo.text = tr("n° %d · %.3f s", "no. %d · %.3f s").format(m.sel + 1, (c.end - c.start).toDouble() / Chop.RATE)
             keepBox.isEnabled = true
             keepBox.isChecked = !c.off
         } else {
-            selInfo.text = if (p.isEmpty()) "aucun repère" else "${p.size} morceaux, $k gardés"
+            selInfo.text = if (p.isEmpty()) tr("aucun repère", "no markers") else tr("${p.size} morceaux, $k gardés", "${p.size} slices, $k kept")
             keepBox.isEnabled = false
         }
         // the loop's bars from the tempo, when one is set
@@ -381,16 +381,16 @@ class SlicerActivity : ComponentActivity() {
         AlertDialog.Builder(this).setTitle(title)
             .setView(FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(field) })
             .setPositiveButton("OK") { _, _ -> then(Recorder.clean(field.text.toString())) }
-            .setNegativeButton("Annuler", null).show()
+            .setNegativeButton(tr("Annuler", "Cancel"), null).show()
         field.requestFocus()
     }
 
     private fun exportPieces() {
         val m = model ?: return
         val use = m.kept()
-        if (use.isEmpty()) { toast("Aucun morceau gardé : pose des repères (Attaques, TAP, Grille, Parts égales)"); return }
+        if (use.isEmpty()) { toast(tr("Aucun morceau gardé : pose des repères (Attaques, TAP, Grille, Parts égales)", "No slice kept: place markers (Attacks, TAP, Grid, Equal parts)")); return }
         prefs.edit().putBoolean("chopLevel", levelBox.isChecked).apply()
-        askName("Nom des morceaux", fileName) { base ->
+        askName(tr("Nom des morceaux", "Slices' name"), fileName) { base ->
             val gain = if (levelBox.isChecked) m.commonGain(use) else 1f
             Thread {
                 var ok = 0
@@ -399,7 +399,7 @@ class SlicerActivity : ComponentActivity() {
                     if (saveWav(base, "%s %02d".format(base, c.i + 1), b)) ok++
                     ui.post { info.text = "Export ${k + 1}/${use.size}" }
                 }
-                ui.post { toast("$ok morceau(x) dans Musique/${Recorder.FOLDER}/Découpes/$base"); info.text = "" }
+                ui.post { toast(tr("$ok morceau(x) dans Musique/${Recorder.FOLDER}/Découpes/$base", "$ok slice(s) in Music/${Recorder.FOLDER}/Découpes/$base")); info.text = "" }
             }.start()
         }
     }
@@ -407,13 +407,13 @@ class SlicerActivity : ComponentActivity() {
     private fun exportLoop() {
         val m = model ?: return
         val k = m.kept()
-        if (k.isEmpty()) { toast("Aucun morceau gardé"); return }
-        askName("Nom de la boucle", "$fileName boucle") { name ->
+        if (k.isEmpty()) { toast(tr("Aucun morceau gardé", "No slice kept")); return }
+        askName(tr("Nom de la boucle", "Loop name"), tr("$fileName boucle", "$fileName loop")) { name ->
             val whole = Chop.Piece(k.first().start, k.last().end, 0, false, k.last().end)
             val gain = if (levelBox.isChecked) m.commonGain(listOf(whole)) else 1f
             Thread {
                 val ok = saveWav(fileName, name, WavIO.write(m.render(whole, gain), m.sound.channels, m.sound.rate, outBits(m.sound)))
-                ui.post { toast(if (ok) "Boucle dans Musique/${Recorder.FOLDER}/Découpes/$fileName" else "Export impossible") }
+                ui.post { toast(if (ok) tr("Boucle dans Musique/${Recorder.FOLDER}/Découpes/$fileName", "Loop in Music/${Recorder.FOLDER}/Découpes/$fileName") else tr("Export impossible", "Export failed")) }
             }.start()
         }
     }
@@ -424,7 +424,7 @@ class SlicerActivity : ComponentActivity() {
     private fun detect() {
         if (busy) return
         busy = true
-        fwInfo.text = "Recherche du firmware…"
+        fwInfo.text = tr("Recherche du firmware…", "Looking for the firmware…")
         val old = session
         session = null
         Thread {
@@ -435,14 +435,14 @@ class SlicerActivity : ComponentActivity() {
                 val s = found?.session
                 session = s
                 if (s != null) {
-                    fwInfo.text = "${s.target.label} détecté (${found.deviceName}).\n${s.target.can.note}"
+                    fwInfo.text = tr("${s.target.label} détecté (${found.deviceName}).\n${s.target.can.note}", "${s.target.label} found (${found.deviceName}).\n${s.target.can.note}")
                     fwBox.visibility = View.VISIBLE
                 } else {
                     fwBox.visibility = View.GONE
                     fwInfo.text = when (found?.deviceName) {
-                        null -> "Aucun FM-1 branché en USB. Les morceaux s'exportent en WAV."
-                        else -> "${found.deviceName} : ce firmware ne prend pas d'échantillons depuis l'appli (ou n'a pas répondu). " +
-                            "Exporte en WAV. Firmwares pris en charge : ${SampleTargets.ALL.joinToString { it.label }}."
+                        null -> tr("Aucun FM-1 branché en USB. Les morceaux s'exportent en WAV.", "No FM-1 plugged over USB. Slices export as WAV.")
+                        else -> tr("${found.deviceName} : ce firmware ne prend pas d'échantillons depuis l'appli (ou n'a pas répondu). ", "${found.deviceName}: this firmware takes no samples from the app (or did not answer). ") +
+                            tr("Exporte en WAV. Firmwares pris en charge : ${SampleTargets.ALL.joinToString { it.label }}.", "Export as WAV. Supported firmwares: ${SampleTargets.ALL.joinToString { it.label }}.")
                     }
                 }
             }
@@ -450,7 +450,7 @@ class SlicerActivity : ComponentActivity() {
     }
 
     private fun runOnFirmware(what: String, job: (SampleTargets.Session, (String, Double) -> Unit) -> String) {
-        val s = session ?: return toast("Aucun firmware compatible")
+        val s = session ?: return toast(tr("Aucun firmware compatible", "No compatible firmware"))
         if (busy) return
         busy = true
         stopPlay()
@@ -464,19 +464,19 @@ class SlicerActivity : ComponentActivity() {
             ui.post {
                 busy = false
                 progress.visibility = View.GONE
-                r.onSuccess { fwInfo.text = it; toast(it) }.onFailure { fwInfo.text = "Échec : ${it.message}" }
+                r.onSuccess { fwInfo.text = it; toast(it) }.onFailure { fwInfo.text = tr("Échec : ${it.message}", "Failed: ${it.message}") }
             }
         }.start()
     }
 
     private fun sendLoop() {
         val m = model ?: return
-        if (m.kept().isEmpty()) return toast("Aucun morceau gardé : la boucle va du premier au dernier gardé")
+        if (m.kept().isEmpty()) return toast(tr("Aucun morceau gardé : la boucle va du premier au dernier gardé", "No slice kept: the loop goes from the first kept to the last"))
         val bars = (barsField.text.toString().toIntOrNull() ?: 1).coerceIn(1, LoomSamples.BARS_MAX)
-        askName("Nom dans le firmware (11 lettres)", fileName.take(11)) { name ->
+        askName(tr("Nom dans le firmware (11 lettres)", "Name in the firmware (11 letters)"), fileName.take(11)) { name ->
             val x = m.loopMono()
-            confirmThen("Ajouter la boucle « ${LoomSamples.cleanName(name)} » ($bars mesure(s)) à ${session?.target?.label} ?") {
-                runOnFirmware("Envoi de la boucle…") { s, p ->
+            confirmThen(tr("Ajouter la boucle « ${LoomSamples.cleanName(name)} » ($bars mesure(s)) à ${session?.target?.label} ?", "Add the loop \"${LoomSamples.cleanName(name)}\" ($bars bar(s)) to ${session?.target?.label}?")) {
+                runOnFirmware(tr("Envoi de la boucle…", "Sending the loop…")) { s, p ->
                     s.add(listOf(SampleTargets.NewSample(name, x, m.sound.rate, LoomSamples.LOOP_ROOT, bars)), p)
                 }
             }
@@ -486,27 +486,27 @@ class SlicerActivity : ComponentActivity() {
     private fun sendPieces() {
         val m = model ?: return
         val use = m.kept()
-        if (use.isEmpty()) return toast("Aucun morceau gardé")
+        if (use.isEmpty()) return toast(tr("Aucun morceau gardé", "No slice kept"))
         val can = session?.target?.can ?: return
-        if (use.size > can.maxSamples) return toast("${use.size} morceaux : ${session?.target?.label} en prend ${can.maxSamples} au plus")
-        askName("Début des noms (les numéros suivent)", fileName.take(8)) { base ->
+        if (use.size > can.maxSamples) return toast(tr("${use.size} morceaux : ${session?.target?.label} en prend ${can.maxSamples} au plus", "${use.size} slices: ${session?.target?.label} takes ${can.maxSamples} at most"))
+        askName(tr("Début des noms (les numéros suivent)", "Start of the names (numbers follow)"), fileName.take(8)) { base ->
             val items = use.map { c -> SampleTargets.NewSample("%s %02d".format(base.take(8), c.i + 1), m.pieceMono(c), m.sound.rate, 60, 0) }
-            confirmThen("Ajouter ${items.size} morceau(x) à ${session?.target?.label} ?") {
-                runOnFirmware("Envoi des morceaux…") { s, p -> s.add(items, p) }
+            confirmThen(tr("Ajouter ${items.size} morceau(x) à ${session?.target?.label} ?", "Add ${items.size} slice(s) to ${session?.target?.label}?")) {
+                runOnFirmware(tr("Envoi des morceaux…", "Sending the slices…")) { s, p -> s.add(items, p) }
             }
         }
     }
 
     private fun restore() {
         val s = session ?: return
-        if (!s.canRestore) return toast("Rien à annuler")
-        confirmThen("Remettre la banque de ${s.target.label} comme avant le dernier envoi ?") {
-            runOnFirmware("Restauration…") { ss, p -> ss.restoreLast(p) }
+        if (!s.canRestore) return toast(tr("Rien à annuler", "Nothing to undo"))
+        confirmThen(tr("Remettre la banque de ${s.target.label} comme avant le dernier envoi ?", "Put ${s.target.label}'s bank back as before the last send?")) {
+            runOnFirmware(tr("Restauration…", "Restoring…")) { ss, p -> ss.restoreLast(p) }
         }
     }
 
     private fun confirmThen(msg: String, f: () -> Unit) {
-        AlertDialog.Builder(this).setMessage(msg).setPositiveButton("Oui") { _, _ -> f() }.setNegativeButton("Non", null).show()
+        AlertDialog.Builder(this).setMessage(msg).setPositiveButton(tr("Oui", "Yes")) { _, _ -> f() }.setNegativeButton(tr("Non", "No"), null).show()
     }
 
     // ------------------------------------------------------------------ small pieces
@@ -576,7 +576,7 @@ class SlicerActivity : ComponentActivity() {
             c.drawColor(0xFF1A1B1D.toInt())
             val mm = m
             if (mm == null) {
-                txt.color = DIM; c.drawText("Ouvre un enregistrement", 30f, height / 2f, txt); txt.color = Color.WHITE
+                txt.color = DIM; c.drawText(tr("Ouvre un enregistrement", "Open a recording"), 30f, height / 2f, txt); txt.color = Color.WHITE
                 return
             }
             if (cols.size != width && width > 0) {

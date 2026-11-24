@@ -52,10 +52,10 @@ class UsbAudioIn(private val ctx: Context) {
     @Synchronized
     fun start(): String {
         if (active) return status()
-        val d = candidate() ?: run { state = "pas d'entrée audio USB"; return state }
+        val d = candidate() ?: run { state = tr("pas d'entrée audio USB", "no USB audio input"); return state }
         if (!um.hasPermission(d)) {
             askPermission(d)
-            state = "accepte l'accès au FM-1 dans la fenêtre d'Android"
+            state = tr("accepte l'accès au FM-1 dans la fenêtre d'Android", "allow access to the FM-1 in Android's window")
             return state
         }
         return open(d)
@@ -69,7 +69,7 @@ class UsbAudioIn(private val ctx: Context) {
                 runCatching { ctx.unregisterReceiver(this) }
                 asking = false
                 if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) Thread { start() }.start()
-                else state = "accès au FM-1 refusé (rebranche-le pour redemander)"
+                else state = tr("accès au FM-1 refusé (rebranche-le pour redemander)", "access to the FM-1 refused (plug it again to ask again)")
             }
         }
         ContextCompat.registerReceiver(ctx, rcv, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -80,25 +80,25 @@ class UsbAudioIn(private val ctx: Context) {
 
     private fun fail(c: UsbDeviceConnection?, why: String): String {
         runCatching { c?.close() }
-        state = "pilote intégré : $why"
+        state = tr("pilote intégré : $why", "built-in driver: $why")
         return state
     }
 
     private fun open(d: UsbDevice): String {
-        val c = um.openDevice(d) ?: return fail(null, "le FM-1 ne s'ouvre pas")
-        val raw = c.rawDescriptors ?: return fail(c, "description USB illisible")
-        val p = Native.usbParse(raw) ?: return fail(c, "aucun flux audio vers le téléphone")
+        val c = um.openDevice(d) ?: return fail(null, tr("le FM-1 ne s'ouvre pas", "the FM-1 does not open"))
+        val raw = c.rawDescriptors ?: return fail(c, tr("description USB illisible", "unreadable USB description"))
+        val p = Native.usbParse(raw) ?: return fail(c, tr("aucun flux audio vers le téléphone", "no audio stream to the phone"))
         val ifNum = p[0]
         val alt = p[1]
         val ep = p[2]
         val all = (0 until d.interfaceCount).map { d.getInterface(it) }
         val intf = all.firstOrNull { it.id == ifNum && it.alternateSetting == alt }
-            ?: return fail(c, "interface $ifNum alt $alt introuvable")
+            ?: return fail(c, tr("interface $ifNum alt $alt introuvable", "interface $ifNum alt $alt not found"))
         // take the interface from Android's driver (force), then select the setting that streams
-        if (!c.claimInterface(intf, true)) return fail(c, "l'interface audio $ifNum ne se libère pas")
+        if (!c.claimInterface(intf, true)) return fail(c, tr("l'interface audio $ifNum ne se libère pas", "audio interface $ifNum does not free up"))
         if (!c.setInterface(intf)) {
             c.releaseInterface(intf)
-            return fail(c, "le réglage $alt de l'interface $ifNum est refusé")
+            return fail(c, tr("le réglage $alt de l'interface $ifNum est refusé", "setting $alt of interface $ifNum refused"))
         }
         // USB Audio Class 1: the endpoint's sampling rate (the FM-1 has a single one: harmless if refused)
         val rate = p[7]
@@ -109,13 +109,13 @@ class UsbAudioIn(private val ctx: Context) {
         val err = Native.usbStart(c.fileDescriptor, raw)
         if (err.isNotEmpty()) {
             c.releaseInterface(intf)
-            return fail(c, "lecture : $err")
+            return fail(c, tr("lecture : $err", "read: $err"))
         }
         conn = c
         claimed = intf
         idle = all.firstOrNull { it.id == ifNum && it.alternateSetting == 0 }
         active = true
-        state = "capture pilote intégré (${p[4]} canaux, ${p[6]} bits, ${p[7]} Hz)"
+        state = tr("capture pilote intégré (${p[4]} canaux, ${p[6]} bits, ${p[7]} Hz)", "capture built-in driver (${p[4]} channels, ${p[6]} bits, ${p[7]} Hz)")
         return state
     }
 
@@ -133,11 +133,11 @@ class UsbAudioIn(private val ctx: Context) {
         if (stats[4] == 0L) {
             val e = stats[3]
             stop()
-            state = if (e == 19L) "FM-1 débranché" else "pilote intégré arrêté (erreur $e)"
+            state = if (e == 19L) tr("FM-1 débranché", "FM-1 unplugged") else tr("pilote intégré arrêté (erreur $e)", "built-in driver stopped (error $e)")
             return state
         }
         val bad = stats[2]
-        return state + if (bad > 0) " · $bad paquets en erreur" else ""
+        return state + if (bad > 0) tr(" · $bad paquets en erreur", " · $bad packets in error") else ""
     }
 
     @Synchronized

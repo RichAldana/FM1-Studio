@@ -63,20 +63,20 @@ class Recorder(private val ctx: Context) {
         if (recording) return ""
         if (parts.isNotEmpty()) keep(defaultName)      // (a previous one never named: kept as it was)
         defaultName = "FM1 Mix " + SimpleDateFormat("yyyy-MM-dd HH-mm-ss", Locale.ROOT).format(Date())
-        val suffixes = if (mode == MODE_SPLIT) listOf(" - émulé", " - FM-1") else listOf("")
+        val suffixes = if (mode == MODE_SPLIT) listOf(tr(" - émulé", " - emulated"), " - FM-1") else listOf("")
         val made = ArrayList<Part>()
         val fds = ArrayList<Int>()
         try {
             for (s in suffixes) {
-                val uri = newEntry("$defaultName$s.wav") ?: throw IllegalStateException("Musique/$FOLDER inaccessible")
+                val uri = newEntry("$defaultName$s.wav") ?: throw IllegalStateException(tr("Musique/$FOLDER inaccessible", "Music/$FOLDER not reachable"))
                 made += Part(uri, s)
-                val pfd = cr.openFileDescriptor(uri, "rw") ?: throw IllegalStateException("fichier inaccessible")
+                val pfd = cr.openFileDescriptor(uri, "rw") ?: throw IllegalStateException(tr("fichier inaccessible", "file not reachable"))
                 fds += pfd.detachFd()                      // the native writer owns and closes it
             }
         } catch (e: Exception) {
             fds.forEach { runCatching { android.os.ParcelFileDescriptor.adoptFd(it).close() } }
             made.forEach { runCatching { cr.delete(it.uri, null, null) } }
-            return e.message ?: "erreur"
+            return e.message ?: tr("erreur", "error")
         }
         val err = Native.recStart(fds[0], if (fds.size > 1) fds[1] else -1, bits, rate, channels)
         if (err.isNotEmpty()) {
@@ -125,7 +125,7 @@ class Recorder(private val ctx: Context) {
         }
         lastKept = parts.map { it.uri }
         parts = emptyList()
-        return "Musique/$FOLDER/$base" + if (mode == MODE_SPLIT) " (2 pistes)" else ".wav"
+        return "Musique/$FOLDER/$base" + if (mode == MODE_SPLIT) tr(" (2 pistes)", " (2 tracks)") else ".wav"
     }
 
     fun discard() {

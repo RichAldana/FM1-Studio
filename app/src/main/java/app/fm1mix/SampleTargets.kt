@@ -41,7 +41,7 @@ object SampleTargets {
          */
         fun add(items: List<NewSample>, progress: (String, Double) -> Unit): String
         /** Put back what the firmware held before the last [add], when it keeps such a copy. Blocking. */
-        fun restoreLast(progress: (String, Double) -> Unit): String = throw IllegalStateException("${target.label} : pas de retour arrière")
+        fun restoreLast(progress: (String, Double) -> Unit): String = throw IllegalStateException(tr("${target.label} : pas de retour arrière", "${target.label}: no way back"))
         val canRestore: Boolean get() = false
         fun close()
     }
@@ -55,8 +55,8 @@ object SampleTargets {
         override val label = "LOOM-8"
         override fun nameMatches(name: String) = Regex("LOOM-8", RegexOption.IGNORE_CASE).containsMatchIn(name)
         override val can = Can(loop = true, oneShots = true, maxSamples = LoomSamples.BANK_N,
-            note = "Banque d'échantillons de LOOM-8 : une boucle suit le tempo du morceau (moteur slice), les morceaux " +
-                "se jouent comme des sons. Les échantillons déjà présents sont gardés ; un échantillon du même nom est remplacé.")
+            note = tr("Banque d'échantillons de LOOM-8 : une boucle suit le tempo du morceau (moteur slice), les morceaux ", "LOOM-8's sample bank: a loop follows the song's tempo (slice engine), the slices ") +
+                tr("se jouent comme des sons. Les échantillons déjà présents sont gardés ; un échantillon du même nom est remplacé.", "play as sounds. The samples already there are kept; a sample with the same name is replaced."))
 
         override fun connect(ctx: Context, info: MidiDeviceInfo): Session? {
             val link = LoomLink.open(ctx, info) ?: return null
@@ -68,35 +68,35 @@ object SampleTargets {
         override val target: Target get() = Loom8
 
         override fun add(items: List<NewSample>, progress: (String, Double) -> Unit): String {
-            progress("Lecture de la banque de LOOM-8", 0.0)
-            val before = link.readBank { progress("Lecture de la banque de LOOM-8", it) }
-                ?: throw IllegalStateException("LOOM-8 n'a pas de banque d'échantillons (même ses sons d'usine) : " +
-                    "réinstalle-le depuis sa page d'installation, puis recommence.")
+            progress(tr("Lecture de la banque de LOOM-8", "Reading LOOM-8's bank"), 0.0)
+            val before = link.readBank { progress(tr("Lecture de la banque de LOOM-8", "Reading LOOM-8's bank"), it) }
+                ?: throw IllegalStateException(tr("LOOM-8 n'a pas de banque d'échantillons (même ses sons d'usine) : ", "LOOM-8 has no sample bank (not even its factory sounds): ") +
+                    tr("réinstalle-le depuis sa page d'installation, puis recommence.", "reinstall it from its install page, then try again."))
             // a copy of the bank as it was, to put it back if needed (Settings of the slicer)
             backup.writeBytes(before)
             val names = items.map { LoomSamples.cleanName(it.name) }.toSet()
             val kept = LoomSamples.keptOf(before).filter { it.isFactory || LoomSamples.cleanName(it.name) !in names }
             val own = kept.count { !it.isFactory }
             if (own + items.size > LoomSamples.BANK_N)
-                throw IllegalStateException("LOOM-8 garde $own échantillons à toi : il n'en prend que ${LoomSamples.BANK_N} en tout.")
+                throw IllegalStateException(tr("LOOM-8 garde $own échantillons à toi : il n'en prend que ${LoomSamples.BANK_N} en tout.", "LOOM-8 keeps $own samples of yours: it only takes ${LoomSamples.BANK_N} in all."))
             // the user's samples first, then the new ones, then the factory set (as loom_samples.py orders them)
             val news = items.map { LoomSamples.Item(it.name, it.root, null, it.bars, null, x = it.x, sr = it.sr) }
             val all = kept.filter { !it.isFactory } + news + kept.filter { it.isFactory }
-            progress("Préparation", 0.0)
+            progress(tr("Préparation", "Preparing"), 0.0)
             val built = try { LoomSamples.build(all) } catch (e: LoomSamples.TooLong) {
-                throw IllegalStateException("Pas assez de place dans la banque de LOOM-8 (${e.message}). Raccourcis ou garde moins de morceaux.")
+                throw IllegalStateException(tr("Pas assez de place dans la banque de LOOM-8 (${e.message}). Raccourcis ou garde moins de morceaux.", "Not enough room in LOOM-8's bank (${e.message}). Shorten them or keep fewer slices."))
             }
-            link.sendBank(built.img) { progress("Écriture dans LOOM-8", it) }
-            return "${items.size} échantillon(s) dans LOOM-8, à ${built.chose} Hz"
+            link.sendBank(built.img) { progress(tr("Écriture dans LOOM-8", "Writing into LOOM-8"), it) }
+            return tr("${items.size} échantillon(s) dans LOOM-8, à ${built.chose} Hz", "${items.size} sample(s) in LOOM-8, at ${built.chose} Hz")
         }
 
         private val backup get() = java.io.File(ctx.filesDir, "loom8-bank-before.bin")
         override val canRestore: Boolean get() = backup.exists()
 
         override fun restoreLast(progress: (String, Double) -> Unit): String {
-            if (!backup.exists()) throw IllegalStateException("Aucune sauvegarde de la banque de LOOM-8.")
-            link.sendBank(backup.readBytes()) { progress("Restauration de la banque", it) }
-            return "Banque de LOOM-8 remise comme avant le dernier envoi"
+            if (!backup.exists()) throw IllegalStateException(tr("Aucune sauvegarde de la banque de LOOM-8.", "No backup of LOOM-8's bank."))
+            link.sendBank(backup.readBytes()) { progress(tr("Restauration de la banque", "Restoring the bank"), it) }
+            return tr("Banque de LOOM-8 remise comme avant le dernier envoi", "LOOM-8's bank put back as before the last send")
         }
 
         override fun close() = link.close()

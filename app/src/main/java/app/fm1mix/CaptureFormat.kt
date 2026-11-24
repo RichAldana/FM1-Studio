@@ -11,7 +11,7 @@ package app.fm1mix
 object CaptureFormat {
     /** A way to ask: [channels] interleaved in what comes in; [indexMask] true: by channel index, else positional. */
     class Try(val channels: Int, val indexMask: Boolean) {
-        override fun toString(): String = "$channels canaux" + if (indexMask) " (index)" else " (stéréo)"
+        override fun toString(): String = tr("$channels canaux", "$channels channels") + if (indexMask) " (index)" else tr(" (stéréo)", " (stereo)")
     }
 
     /** What to try, in order, for a device that reports [deviceCounts] (empty: unknown). */

@@ -25,7 +25,7 @@ class PowerButton(ctx: Context) : View(ctx) {
     private val r = RectF()
     private val d = ctx.resources.displayMetrics.density
 
-    init { contentDescription = "Marche / arrêt" }
+    init { contentDescription = tr("Marche / arrêt", "Power") }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()

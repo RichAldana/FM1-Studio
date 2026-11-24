@@ -64,7 +64,7 @@ class Sheet(private val act: Activity) {
         val header = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(4)) }
         back = TextView(act).apply {
             text = "‹"; textSize = 30f; setTextColor(INK); gravity = Gravity.CENTER
-            contentDescription = "Retour"
+            contentDescription = tr("Retour", "Back")
             setOnClickListener { pop() }
         }
         header.addView(back, LinearLayout.LayoutParams(dp(48), dp(48)))
@@ -74,7 +74,7 @@ class Sheet(private val act: Activity) {
         }
         header.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(TextView(act).apply {
-            text = "✕"; textSize = 18f; setTextColor(DIM); gravity = Gravity.CENTER; contentDescription = "Fermer"
+            text = "✕"; textSize = 18f; setTextColor(DIM); gravity = Gravity.CENTER; contentDescription = tr("Fermer", "Close")
             setOnClickListener { dialog.dismiss() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         var downY = 0f

@@ -49,8 +49,8 @@ class AudioIo(private val ctx: Context) {
             route()
             if (removed.any { isUsb(it) }) {
                 // the FM-1 really gone; claiming its audio interface must not stop what reads it
-                if (usbIn.candidate() == null) { stopCapture(); captureState = "FM-1 débranché" }
-                else if (rec != null && removed.any { isUsb(it) && it.isSource }) { stopCapture(); captureState = "entrée USB retirée par Android" }
+                if (usbIn.candidate() == null) { stopCapture(); captureState = tr("FM-1 débranché", "FM-1 unplugged") }
+                else if (rec != null && removed.any { isUsb(it) && it.isSource }) { stopCapture(); captureState = tr("entrée USB retirée par Android", "USB input removed by Android") }
             }
         }
     }
@@ -99,18 +99,18 @@ class AudioIo(private val ctx: Context) {
     /** What Android sees of the FM-1 over USB, for a diagnosis: each USB audio device, its direction, channels, rates. */
     fun usbReport(): String {
         val lines = ArrayList<String>()
-        for ((flag, dir) in listOf(AudioManager.GET_DEVICES_INPUTS to "entrée", AudioManager.GET_DEVICES_OUTPUTS to "sortie")) {
+        for ((flag, dir) in listOf(AudioManager.GET_DEVICES_INPUTS to tr("entrée", "input"), AudioManager.GET_DEVICES_OUTPUTS to tr("sortie", "output"))) {
             for (d in am.getDevices(flag)) {
                 if (!isUsb(d)) continue
                 val ch = d.channelCounts.joinToString(",").ifEmpty { "?" }
                 val sr = d.sampleRates.joinToString(",").ifEmpty { "?" }
-                lines += "$dir USB « ${d.productName} » : canaux $ch, fréquences $sr"
+                lines += tr("$dir USB « ${d.productName} » : canaux $ch, fréquences $sr", "$dir USB \"${d.productName}\": channels $ch, rates $sr")
             }
         }
-        if (lines.isEmpty()) lines += "Android ne voit aucun appareil audio USB."
-        if (lines.none { it.startsWith("sortie") }) lines += "Pas de sortie USB : le FM-1 ne peut pas jouer le son du téléphone."
-        if (lines.none { it.startsWith("entrée") }) lines += "Android ne propose pas d'entrée USB : l'appli lit le FM-1 avec son pilote intégré."
-        lines += "Sortie actuelle : ${outputName()}"
+        if (lines.isEmpty()) lines += tr("Android ne voit aucun appareil audio USB.", "Android sees no USB audio device.")
+        if (lines.none { it.startsWith(tr("sortie", "output")) }) lines += tr("Pas de sortie USB : le FM-1 ne peut pas jouer le son du téléphone.", "No USB output: the FM-1 cannot play the phone's sound.")
+        if (lines.none { it.startsWith(tr("entrée", "input")) }) lines += tr("Android ne propose pas d'entrée USB : l'appli lit le FM-1 avec son pilote intégré.", "Android offers no USB input: the app reads the FM-1 with its built-in driver.")
+        lines += tr("Sortie actuelle : ${outputName()}", "Current output: ${outputName()}")
         return lines.joinToString("\n")
     }
 
@@ -118,12 +118,12 @@ class AudioIo(private val ctx: Context) {
     fun outputName(): String {
         val d = track?.routedDevice ?: return "–"
         return when (d.type) {
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "haut-parleur du téléphone"
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> tr("haut-parleur du téléphone", "phone speaker")
             AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth ${d.productName}"
             AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER -> "Bluetooth LE ${d.productName}"
-            AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET -> "casque filaire"
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET -> tr("casque filaire", "wired headphones")
             AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET ->
-                if (isFm1(d)) "FM-1 (USB)" else "casque USB ${Fm1Id.bare(d.productName?.toString() ?: "")}"
+                if (isFm1(d)) "FM-1 (USB)" else tr("casque USB ${Fm1Id.bare(d.productName?.toString() ?: "")}", "USB headset ${Fm1Id.bare(d.productName?.toString() ?: "")}")
             else -> d.productName.toString()
         }
     }
@@ -166,7 +166,7 @@ class AudioIo(private val ctx: Context) {
         }, "fm1-out").also { it.priority = Thread.MAX_PRIORITY; it.start() }
 
         captureAllowed = allowCapture
-        captureState = "capture : recherche du FM-1…"
+        captureState = tr("capture : recherche du FM-1…", "capture: looking for the FM-1…")
         Thread { startCapture() }.start()            // (it may wait on Android's routing: not on the screen's thread)
         return captureState
     }
@@ -186,7 +186,7 @@ class AudioIo(private val ctx: Context) {
     @Synchronized
     fun startCapture(): String {
         if (!running || rec != null || usbIn.active) return captureStatus()
-        if (!captureAllowed) { captureState = "capture non autorisée"; return captureState }
+        if (!captureAllowed) { captureState = tr("capture non autorisée", "capture not allowed"); return captureState }
         val dev = usbInput()
         if (dev == null) {                            // the phone offers no USB input: read the FM-1 ourselves
             captureState = usbIn.start()
@@ -204,20 +204,20 @@ class AudioIo(private val ctx: Context) {
                     .setBufferSizeInBytes(frames * 2 * t.channels * 8)
                     .build()
             } catch (e: Exception) {
-                errors += "$t : ${e.message}"
+                errors += tr("$t : ${e.message}", "$t: ${e.message}")
                 continue
             }
-            if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); errors += "$t : refusé"; continue }
+            if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); errors += tr("$t : refusé", "$t: refused"); continue }
             r.setPreferredDevice(dev)
-            try { r.startRecording() } catch (e: Exception) { r.release(); errors += "$t : ${e.message}"; continue }
-            if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) { r.release(); errors += "$t : ne démarre pas"; continue }
+            try { r.startRecording() } catch (e: Exception) { r.release(); errors += tr("$t : ${e.message}", "$t: ${e.message}"); continue }
+            if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) { r.release(); errors += tr("$t : ne démarre pas", "$t: does not start"); continue }
             // Android may fall back on the phone's microphone when the USB driver refuses a format: then try the next
             var routed = r.routedDevice
             var waited = 0
             while (routed == null && waited < 400) { Thread.sleep(20); waited += 20; routed = r.routedDevice }
             if (routed != null && !isUsb(routed)) {
                 runCatching { r.stop() }; r.release()
-                errors += "$t : pris sur ${routed.productName}"
+                errors += tr("$t : pris sur ${routed.productName}", "$t: taken from ${routed.productName}")
                 continue
             }
             rec = r
@@ -227,7 +227,7 @@ class AudioIo(private val ctx: Context) {
                 val st = ShortArray(frames * 2)
                 while (running && rec === r) {
                     val got = r.read(raw, 0, raw.size)   // blocking
-                    if (got < 0) { captureState = "capture : erreur de lecture $got"; break }
+                    if (got < 0) { captureState = tr("capture : erreur de lecture $got", "capture: read error $got"); break }
                     val m = CaptureFormat.firstTwo(raw, got, n, st)
                     if (m > 0) { Native.pushCapture(st, m); androidSamples += m }
                 }
@@ -235,7 +235,7 @@ class AudioIo(private val ctx: Context) {
             captureState = "capture $t"
             return captureState
         }
-        captureState = "capture impossible (" + errors.joinToString(" ; ") + ")"
+        captureState = tr("capture impossible (", "capture failed (") + errors.joinToString(" ; ") + ")"
         return captureState
     }
 

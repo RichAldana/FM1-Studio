@@ -59,7 +59,7 @@ class LoomLink private constructor(
         }
     }
 
-    class NoAnswer : Exception("Le FM-1 ne répond plus.")
+    class NoAnswer : Exception(tr("Le FM-1 ne répond plus.", "The FM-1 no longer answers."))
 
     /** Send a request, wait for its answer (what follows the command byte). */
     fun req(cmd: Int, args: IntArray, ms: Long = 3000): IntArray {
@@ -103,9 +103,9 @@ class LoomLink private constructor(
             val adr = off + at
             val r = retry(17, intArrayOf(0, adr and 0x7F, (adr shr 7) and 0x7F, (adr shr 14) and 0x7F, want and 0x7F, want shr 7), 3000)
             if (r.size > 4 && r[4] != 0)
-                throw IllegalStateException(if (r[4] == 4) "Le FM-1 est en train d'écrire ses échantillons." else "Le FM-1 n'a pas pu lire ses échantillons.")
+                throw IllegalStateException(if (r[4] == 4) tr("Le FM-1 est en train d'écrire ses échantillons.", "The FM-1 is writing its samples.") else tr("Le FM-1 n'a pas pu lire ses échantillons.", "The FM-1 could not read its samples."))
             val b = LoomSamples.unpack7(r.copyOfRange(minOf(5, r.size), r.size))
-            if (b.size < want) throw IllegalStateException("lecture incomplète")
+            if (b.size < want) throw IllegalStateException(tr("lecture incomplète", "incomplete read"))
             System.arraycopy(b, 0, out, at, want)
             at += want
             onPart?.invoke(at.toDouble() / n)
@@ -116,7 +116,7 @@ class LoomLink private constructor(
     /** The bank's image as the FM-1 holds it (header + data), or null when it holds none. */
     fun readBank(onPart: ((Double) -> Unit)? = null): ByteArray? {
         val info = req(15, intArrayOf(0))
-        if (info.isEmpty() || info[0] != 2) throw IllegalStateException("Ce LOOM-8 est trop ancien : mets-le à jour depuis sa page d'installation.")
+        if (info.isEmpty() || info[0] != 2) throw IllegalStateException(tr("Ce LOOM-8 est trop ancien : mets-le à jour depuis sa page d'installation.", "This LOOM-8 is too old: update it from its install page."))
         if (info.size < 6 || info[5] == 0) return null
         val hdr = readBytes(0, LoomSamples.HDR_USED)
         val h = LoomSamples.parseHeader(hdr) ?: return null
@@ -139,8 +139,8 @@ class LoomLink private constructor(
                 k++
             }
             val rc = if (r.isNotEmpty()) r[r.size - 1] else 99
-            if (rc != 0) throw IllegalStateException("Le FM-1 n'a pas pris les échantillons (${LoomSamples.RC[rc] ?: rc}" +
-                (if (f.cmd == 12) " à ${f.what}" else "") + ").")
+            if (rc != 0) throw IllegalStateException(tr("Le FM-1 n'a pas pris les échantillons (${LoomSamples.RC[rc] ?: rc}", "The FM-1 did not take the samples (${LoomSamples.RC[rc] ?: rc}") +
+                (if (f.cmd == 12) tr(" à ${f.what}", " at ${f.what}") else "") + ").")
             if (f.cmd == 12 && onPart != null) onPart((minOf(f.off + 256, img.size) - LoomSamples.BANK_HDR).toDouble() / total)
         }
     }

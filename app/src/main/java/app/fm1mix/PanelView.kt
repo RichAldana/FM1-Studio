@@ -21,6 +21,13 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
         const val PART_ALL = 0
         const val PART_TOP = 1
         const val PART_KEYS = 2
+        const val NOTES_NONE = 0
+        const val NOTES_C = 1
+        const val NOTES_ALL = 2
+        private val NOTE = arrayOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+        /** the note a key plays at [octave]: key ids 14..40 are F3..G5 at octave 0 */
+        fun noteOf(id: Int, octave: Int) = 53 + (id - 14) + 12 * octave
+        fun noteName(n: Int) = NOTE[Math.floorMod(n, 12)] + (Math.floorDiv(n, 12) - 1)
     }
 
     private val bmp = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565)
@@ -32,6 +39,14 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
         set(v) { field = v.coerceIn(0, 1023); invalidate() }
     /** MASTER turned on the screen (kept per firmware by the activity) */
     var onPot: ((Int) -> Unit)? = null
+    /** OCT- (-1) or OCT+ (+1) pressed on the screen (the activity follows the octave) */
+    var onOct: ((Int) -> Unit)? = null
+    /** the keyboard's octave as the activity follows it (0: the lower C is C4) */
+    var octave = 0
+        set(v) { if (v != field) { field = v; invalidate() } }
+    /** the notes written on the keys: [NOTES_NONE], [NOTES_C] (the Cs, with their octave), [NOTES_ALL] */
+    var noteNames = NOTES_C
+        set(v) { if (v != field) { field = v; invalidate() } }
     /** Shown dimmed, untouchable, when the machine is off. */
     var powered = false
         set(v) { field = v; invalidate() }
@@ -186,8 +201,20 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
                 val bw = minOf(k.w * 0.5f, 60f)
                 round(c, k.x + k.w / 2f - bw / 2f, k.y + k.h - 24f, bw, 9f, 4.5f, fill.color)
             }
-            if (k.name.isNotEmpty()) label(c, k.name, k.x + k.w / 2f, k.y + k.h - 46f, 28f, 0xFF9A8F80.toInt())
+            keyName(c, k)
         }
+    }
+
+    /** the key's note, as [noteNames] asks: the Cs with their octave, or every note (black keys smaller) */
+    private fun keyName(c: Canvas, k: L.Key) {
+        if (noteNames == NOTES_NONE) return
+        val n = noteOf(k.id, octave)
+        val isC = Math.floorMod(n, 12) == 0
+        if (noteNames == NOTES_C && !isC) return
+        val nm = if (isC) noteName(n) else NOTE[Math.floorMod(n, 12)]
+        if (k.black) label(c, nm, k.x + k.w / 2f, k.y + k.h - 34f, 20f, 0xFF77746E.toInt())
+        else label(c, nm, k.x + k.w / 2f, k.y + k.h - 46f, if (isC) 28f else 24f,
+                   if (isC) 0xFF9A8F80.toInt() else 0xFFB5AA9A.toInt())
     }
 
     private fun drawKnob(c: Canvas, e: L.Enc, degrees: Float, isPot: Boolean) {
@@ -258,6 +285,7 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
                 val b = l.buttons[h.index]
                 down[b.id] = true
                 Native.key(b.id, true)
+                if (b.id == 0) onOct?.invoke(-1) else if (b.id == 1) onOct?.invoke(1)
                 performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             }
             L.HIT_KEY -> {

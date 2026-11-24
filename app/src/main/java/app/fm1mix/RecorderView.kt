@@ -93,7 +93,7 @@ class RecorderView(ctx: Context) : View(ctx) {
             }
         } else {
             p.textSize = 13f * d; p.typeface = Typeface.DEFAULT; p.color = 0xFF6E6F74.toInt()
-            c.drawText(if (recording) "…" else "Touche ● pour enregistrer", w / 2f, mid + 4f * d, p)
+            c.drawText(if (recording) "…" else tr("Touche ● pour enregistrer", "Tap ● to record"), w / 2f, mid + 4f * d, p)
         }
         // the button
         val br = minOf(h * 0.12f, 34f * d)
@@ -113,8 +113,8 @@ class RecorderView(ctx: Context) : View(ctx) {
         if (hasTake && !recording) {
             p.textAlign = Paint.Align.RIGHT; p.color = amber; p.textSize = 15f * d
             val tx = w - 20f * d
-            c.drawText("Découper ›", tx, cy + 5f * d, p)
-            slice.set(tx - p.measureText("Découper ›") - 12f * d, cy - 24f * d, tx + 12f * d, cy + 24f * d)
+            c.drawText(tr("Découper ›", "Slice ›"), tx, cy + 5f * d, p)
+            slice.set(tx - p.measureText(tr("Découper ›", "Slice ›")) - 12f * d, cy - 24f * d, tx + 12f * d, cy + 24f * d)
         } else slice.setEmpty()
         if (recording) postInvalidateDelayed(100)
     }
