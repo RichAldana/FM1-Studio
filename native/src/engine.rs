@@ -282,7 +282,7 @@ impl Router {
         let st = msg[0];
         // transport and clock always reach the firmware (active sensing and reset do not); the pad's clock hears them
         if st == 0xf8 { crate::fx::clock_tick() }
-        if st == 0xfa { crate::fx::clock_start() }
+        if st == 0xfa { crate::fx::clock_start(); crate::loops::midi_start(); }
         if (0xf8..=0xfc).contains(&st) {
             m.soc.periph.apply(&Action::Midi { b: st });
             return;
@@ -294,6 +294,8 @@ impl Router {
         sh.midi_count.fetch_add(1, Ordering::Relaxed);
         let last = ((st as u32) << 16) | ((*msg.get(1).unwrap_or(&0) as u32) << 8) | (*msg.get(2).unwrap_or(&0) as u32);
         sh.midi_last.store(last, Ordering::Relaxed);
+        // a note-on: the loop player's note trigger hears it (it still goes on as before)
+        if st & 0xf0 == 0x90 && msg.len() == 3 && msg[2] > 0 { crate::loops::note_on(msg[1]) }
 
         let panel = self.mode == MidiMode::Panel && m.soc.board == Board::Fm1 && self.mapper.is_some();
         match self.mode {
@@ -339,11 +341,13 @@ pub struct Shared {
     ext_target_ms: AtomicU32,
     ext_reader: Mutex<crate::dsp::DriftReader>,
     limiter: Mutex<crate::dsp::Limiter>,
-    /// the EQs: the emulated FM-1, the real one, the master of what plays, the master of what is recorded
-    eq: Mutex<[crate::dsp::Eq3; 4]>,
+    /// the EQs: the emulated FM-1, the real one, the master of what plays, the master of what is recorded, the loops
+    eq: Mutex<[crate::dsp::Eq3; 5]>,
     /// peaks of what plays (before the limiter) and of what is recorded, as the other peaks
     peak_out: AtomicU32,
     peak_rec: AtomicU32,
+    /// the loop player's strip, as the other peaks
+    peak_loop: AtomicU32,
     /// the firmware's saved state (state.rs) and its generation, published when the flash settles after a change
     saved: Mutex<Option<(u64, Vec<u8>)>>,
 }
@@ -372,9 +376,10 @@ impl Shared {
             ext_target_ms: AtomicU32::new(EXT_MS_NORMAL),
             ext_reader: Mutex::new(crate::dsp::DriftReader::default()),
             limiter: Mutex::new(crate::dsp::Limiter::default()),
-            eq: Mutex::new([crate::dsp::Eq3::default(); 4]),
+            eq: Mutex::new([crate::dsp::Eq3::default(); 5]),
             peak_out: AtomicU32::new(0),
             peak_rec: AtomicU32::new(0),
+            peak_loop: AtomicU32::new(0),
             saved: Mutex::new(None),
         }
     }
@@ -501,6 +506,7 @@ impl Engine {
                 sh.underruns.fetch_add(1, Ordering::Relaxed);
             }
         }
+        let ext_late;
         {
             // the real FM-1, read at the phone's clock however its own drifts (dsp.rs): no cut, no repeat
             let mut extf = vec![0f32; n & !1];
@@ -509,6 +515,7 @@ impl Engine {
             let mut r = sh.ext_reader.lock().unwrap();
             let was = r.underruns;
             r.read(&mut q, &mut extf, target);
+            ext_late = r.latency_frames(&q);
             if r.underruns != was {
                 sh.ext_underruns.fetch_add(1, Ordering::Relaxed);
             }
@@ -517,7 +524,7 @@ impl Engine {
             }
         }
         // the mixer: each source through its EQ, at its volume and balance; the sum at the master, through its EQ
-        use crate::dsp::{eq_db, get_f, lr, BAL_EMU, BAL_EXT, EQ_EMU, EQ_EXT, EQ_MASTER, MASTER};
+        use crate::dsp::{eq_db, get_f, lr, BAL_EMU, BAL_EXT, EQ_EMU, EQ_EXT, EQ_LOOP, EQ_MASTER, MASTER};
         let (be, bx, gm) = (get_f(&BAL_EMU), get_f(&BAL_EXT), get_f(&MASTER));
         let ge = lr(g_emu, be, gm);
         let gx = lr(g_ext, bx, gm);
@@ -530,15 +537,23 @@ impl Engine {
         eq[1].set(eq_db(EQ_EXT));
         eq[2].set(m_db);
         eq[3].set(m_db);
+        // the loop player (loops.rs): its slots, its EQ, at the master's level (its own volume inside)
+        let mut lp = vec![0f32; n & !1];
+        crate::loops::process(&mut lp, &xf, ext_late);
+        eq[4].set(eq_db(EQ_LOOP));
+        eq[4].process(&mut lp);
+        let gl = lr(1.0, 0.0, gm);
         eq[0].process(&mut ef);
         eq[1].process(&mut xf);
-        // the pad's effect (fx.rs) on a bus: the emulated FM-1, the real one, or both. The real one goes through it only
-        // when it plays from the phone: played on the FM-1, its sound does not pass here (the recording keeps it dry)
+        // the pad's effect (fx.rs) on a bus: both FM-1s (0), the emulated one (1), the real one (2) or the loops (3).
+        // The real one goes through it only when it plays from the phone: played on the FM-1, its sound does not pass
+        // here (the recording keeps it dry)
         let target = crate::fx::TARGET.load(Ordering::Relaxed);
         let phone = gx == gxr;
-        let emu_in = target != 2;
-        let ext_in = target != 1 && phone;
-        let (mut pe, mut px) = (0u32, 0u32);
+        let emu_in = target == 0 || target == 1;
+        let ext_in = (target == 0 || target == 2) && phone;
+        let loop_in = target == 3 || (target == 0 && crate::loops::IN_ALL.load(Ordering::Relaxed));
+        let (mut pe, mut px, mut pl) = (0u32, 0u32, 0u32);
         let mut bus = vec![0f32; n];
         let mut mix = vec![0f32; n];
         for i in 0..n {
@@ -546,8 +561,10 @@ impl Engine {
             let x = xf[i] * gx[i & 1];
             pe = pe.max(e.abs() as u32);
             px = px.max(x.abs() as u32);
-            bus[i] = if emu_in { e } else { 0.0 } + if ext_in { x } else { 0.0 };
-            mix[i] = if emu_in { 0.0 } else { e } + if ext_in { 0.0 } else { x };
+            let l = if i < lp.len() { lp[i] * gl[i & 1] } else { 0.0 };
+            pl = pl.max(l.abs() as u32);
+            bus[i] = if emu_in { e } else { 0.0 } + if ext_in { x } else { 0.0 } + if loop_in { l } else { 0.0 };
+            mix[i] = if emu_in { 0.0 } else { e } + if ext_in { 0.0 } else { x } + if loop_in { 0.0 } else { l };
         }
         if let Ok(mut g) = crate::fx::ENGINE.try_lock() {
             if let Some(fxe) = g.as_mut() { fxe.process(&mut bus); }
@@ -571,6 +588,7 @@ impl Engine {
         }
         sh.peak_emu.fetch_max(pe, Ordering::Relaxed);
         sh.peak_ext.fetch_max(px, Ordering::Relaxed);
+        sh.peak_loop.fetch_max(pl, Ordering::Relaxed);
         crate::recorder::feed_mix(&emu, &ext, rec);
     }
 
@@ -614,6 +632,12 @@ impl Engine {
     pub fn take_meters(&self) -> (f32, f32) {
         let m = self.take_meters4();
         (m[0].min(1.0), m[1].min(1.0))
+    }
+
+    /// As take_meters4, and the loop player's strip fifth.
+    pub fn take_meters5(&self) -> [f32; 5] {
+        let m = self.take_meters4();
+        [m[0], m[1], m[2], m[3], self.shared.peak_loop.swap(0, Ordering::Relaxed) as f32 / 32768.0]
     }
 
     /// The peaks since the last call, 1 = full scale and above it when it would clip: the emulated FM-1, the real

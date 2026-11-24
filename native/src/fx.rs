@@ -323,6 +323,9 @@ fn transport(internal_beat: f64) -> (f64, f64, bool) {
     }
 }
 
+/// (tempo, beat position, true when it is the MIDI clock's), for the loop player (loops.rs)
+pub fn clock() -> (f64, f64, bool) { transport(*INTERNAL_BEAT.lock().unwrap()) }
+
 /// For the screen: [tempo, beat, 1 when it is the MIDI clock's]
 pub fn info() -> [f32; 3] {
     let (bpm, beat, midi) = transport(*INTERNAL_BEAT.lock().unwrap());

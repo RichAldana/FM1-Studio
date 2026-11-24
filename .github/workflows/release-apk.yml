@@ -1,6 +1,14 @@
-# Publishes a version of the app: builds the APK and attaches it to a GitHub release as fm1mix.apk.
+# Publishes a version of the app: builds the APK and attaches it to a GitHub release as fm1mix.apk, with the source
+# it was built from (fm1mix-VERSION-source.tar.gz: GPL-3.0 asks that whoever gets the APK can get the source).
 # The download link always gives the last published version, and changes only when this runs (never on a plain push):
-#   https://github.com/RichAldana/FM1-Studio/releases/latest/download/fm1mix.apk
+#   https://github.com/<the releases' repository>/releases/latest/download/fm1mix.apk
+# Where the releases go:
+#   - this repository by default (its links work only for those who can see it: not for everyone while it is private);
+#   - or a public repository for the releases alone (RichAldana/FM1-Mix), when this repository's settings have:
+#       Secrets and variables > Actions > Variables:  PUBLIC_REPO = RichAldana/FM1-Mix
+#       Secrets and variables > Actions > Secrets:    PUBLIC_REPO_TOKEN = a fine-grained token, that repository only,
+#                                                     "Contents: Read and write"
+#     (the public repository needs one commit, a README, for its releases' tags).
 # Two ways to run it:
 #   - GitHub: Actions tab > "Publish the app" > Run workflow: the version is versionName in app/build.gradle.kts;
 #   - push a tag v0.22 (the version is the tag's).
@@ -20,14 +28,22 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
+      PUBLIC_REPO: ${{ vars.PUBLIC_REPO }}
+      PUBLIC_REPO_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - name: The version (and not one already published)
+      - name: Where, and the version (not one already published)
         id: v
+        env:
+          OWN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ -n "$PUBLIC_REPO" ]; then
+            [ -n "$PUBLIC_REPO_TOKEN" ] || { echo "::error::PUBLIC_REPO is $PUBLIC_REPO but there is no PUBLIC_REPO_TOKEN secret"; exit 1; }
+            repo=$PUBLIC_REPO; export GH_TOKEN=$PUBLIC_REPO_TOKEN
+          else
+            repo=$GITHUB_REPOSITORY; export GH_TOKEN=$OWN_TOKEN
+          fi
           name=$(sed -n 's/^ *versionName *= *"\(.*\)".*/\1/p' app/build.gradle.kts)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             v=${GITHUB_REF_NAME#v}
@@ -36,13 +52,23 @@ jobs:
             v=$name
           fi
           [[ "$v" =~ ^[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?$ ]] || { echo "::error::version '$v'?"; exit 1; }
-          if gh release view "v$v" >/dev/null 2>&1; then
-            echo "::error::v$v is already published: raise versionName and versionCode in app/build.gradle.kts"; exit 1
+          gh repo view "$repo" --json name >/dev/null || { echo "::error::cannot reach $repo (the token?)"; exit 1; }
+          if gh release view "v$v" -R "$repo" >/dev/null 2>&1; then
+            echo "::error::v$v is already published in $repo: raise versionName and versionCode in app/build.gradle.kts"; exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "releases: $repo, version $v"
       - name: fm1-emu (the emulator core, MIT)
         run: |
           [ -d third_party/fm1-emu/crates ] || git clone --depth 1 https://github.com/joakimeriksson/fm1-emu third_party/fm1-emu
+      - name: The source, as it is built
+        run: |
+          set -euo pipefail
+          v="${{ steps.v.outputs.version }}"
+          mkdir -p "$RUNNER_TEMP/dist"
+          tar --exclude=.git --exclude=./dist --transform "s,^\.,fm1mix-$v-source," \
+              -czf "$RUNNER_TEMP/dist/fm1mix-$v-source.tar.gz" .
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       - name: Android platform and NDK
@@ -62,24 +88,32 @@ jobs:
         with: { gradle-version: '8.9' }
       - run: gradle :app:assembleDebug --stacktrace
       - name: Publish the release
+        env:
+          OWN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           v="${{ steps.v.outputs.version }}"
-          mkdir dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/fm1mix.apk
-          cp dist/fm1mix.apk "dist/fm1mix-$v.apk"
-          (cd dist && sha256sum fm1mix.apk "fm1mix-$v.apk" > SHA256SUMS)
-          # the notes: this version's section of README.md ("## v0.21 : ..."), and how to install
+          repo="${{ steps.v.outputs.repo }}"
+          if [ "$repo" = "$GITHUB_REPOSITORY" ]; then export GH_TOKEN=$OWN_TOKEN; target=(--target "$GITHUB_SHA")
+          else export GH_TOKEN=$PUBLIC_REPO_TOKEN; target=(); fi
+          dist="$RUNNER_TEMP/dist"
+          cp app/build/outputs/apk/debug/app-debug.apk "$dist/fm1mix.apk"
+          cp "$dist/fm1mix.apk" "$dist/fm1mix-$v.apk"
+          (cd "$dist" && sha256sum fm1mix.apk "fm1mix-$v.apk" "fm1mix-$v-source.tar.gz" > SHA256SUMS)
+          # the notes: this version's section of README.md ("## v0.22 : ..."), how to install, the source
           awk -v h="## v$v " 'index($0, h) == 1 { on = 1; next } on && /^## / { exit } on' README.md > notes.md
           {
             echo
             echo "### Installer"
-            echo "Sur le téléphone, ouvrir ce lien et installer \`fm1mix.apk\` (autoriser l'installation depuis le navigateur la première fois) :"
-            echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/fm1mix.apk"
+            echo "Sur le téléphone (Android, arm64), ouvrir ce lien et installer \`fm1mix.apk\` (autoriser l'installation depuis le navigateur la première fois) :"
+            echo "https://github.com/$repo/releases/latest/download/fm1mix.apk"
             echo
             echo "Chaque version s'installe par-dessus la précédente, les réglages restent."
+            echo
+            echo "### Source"
+            echo "FM1 Mix est sous GPL-3.0-only : le code source de cette version est joint (\`fm1mix-$v-source.tar.gz\`)."
           } >> notes.md
           prerelease=()
           [[ "$v" == *-* ]] && prerelease=(--prerelease)
-          gh release create "v$v" dist/* --target "$GITHUB_SHA" --title "FM1 Mix $v" --notes-file notes.md "${prerelease[@]}"
-          echo "published v$v: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/fm1mix.apk"
+          gh release create "v$v" "$dist"/* -R "$repo" "${target[@]}" --title "FM1 Mix $v" --notes-file notes.md "${prerelease[@]}"
+          echo "published v$v: https://github.com/$repo/releases/latest/download/fm1mix.apk"

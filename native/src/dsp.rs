@@ -30,7 +30,9 @@ pub fn get_f(a: &AtomicU32) -> f32 {
 pub const EQ_EMU: usize = 0;
 pub const EQ_EXT: usize = 1;
 pub const EQ_MASTER: usize = 2;
-pub static EQ_DB: [AtomicU32; 9] = [const { AtomicU32::new(0) }; 9];
+/// the loop player's strip (loops.rs)
+pub const EQ_LOOP: usize = 3;
+pub static EQ_DB: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
 /// the bands: a low shelf, a bell, a high shelf (Hz), and the bell's Q
 pub const EQ_FREQ: [f32; 3] = [150.0, 1000.0, 6000.0];
 const EQ_Q: f32 = 0.7;

@@ -150,7 +150,7 @@ class SlicerActivity : ComponentActivity() {
         fwBox.addView(row(btn(tr("Boucle →", "Loop →")) { sendLoop() }, barsField, label(tr("mesures", "bars")), btn(tr("Morceaux →", "Slices →")) { sendPieces() }))
         fwBox.addView(row(btn(tr("Annuler le dernier envoi", "Undo the last send")) { restore() }, btn(tr("Rechercher", "Search")) { detect() }))
         col.addView(fwBox)
-        col.addView(row(btn(tr("Rechercher le FM-1", "Look for the FM-1")) { detect() }))
+        if (SampleTargets.SEND_ENABLED) col.addView(row(btn(tr("Rechercher le FM-1", "Look for the FM-1")) { detect() }))
 
         root.addView(ScrollView(this).apply { addView(col) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
@@ -422,6 +422,14 @@ class SlicerActivity : ComponentActivity() {
 
     /** find the plugged FM-1 and what its firmware can take (SampleTargets) */
     private fun detect() {
+        if (!SampleTargets.SEND_ENABLED) {      // frozen: nothing is sent to the FM-1, the WAV export only
+            fwBox.visibility = View.GONE
+            fwInfo.text = tr("L'envoi d'échantillons vers LOOM-8 est gelé dans cette version : il n'a pas encore été testé sur un vrai FM-1. ",
+                "Sending samples into LOOM-8 is frozen in this version: it has not been tried on a real FM-1 yet. ") +
+                tr("Exporte les morceaux en WAV, puis ajoute-les avec la page Samples du site de LOOM-8.",
+                    "Export the slices as WAV, then add them with the Samples page of LOOM-8's site.")
+            return
+        }
         if (busy) return
         busy = true
         fwInfo.text = tr("Recherche du firmware…", "Looking for the firmware…")
@@ -450,6 +458,7 @@ class SlicerActivity : ComponentActivity() {
     }
 
     private fun runOnFirmware(what: String, job: (SampleTargets.Session, (String, Double) -> Unit) -> String) {
+        if (!SampleTargets.SEND_ENABLED) return
         val s = session ?: return toast(tr("Aucun firmware compatible", "No compatible firmware"))
         if (busy) return
         busy = true

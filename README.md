@@ -1,12 +1,14 @@
-# FM1 Mix (bêta, v0.21)
+# FM1 Mix (bêta, v0.25)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
-**Télécharger la dernière version** (Android, arm64) :
-[fm1mix.apk](https://github.com/RichAldana/FM1-Studio/releases/latest/download/fm1mix.apk) ·
-[toutes les versions](https://github.com/RichAldana/FM1-Studio/releases).
+**Télécharger la dernière version** (Android, arm64), lien pour tout le monde :
+[fm1mix.apk](https://github.com/RichAldana/FM1-Mix/releases/latest/download/fm1mix.apk) ·
+[toutes les versions](https://github.com/RichAldana/FM1-Mix/releases) (dépôt public des seules versions publiées,
+avec le code source de chacune ; ce dépôt-ci peut rester privé).
 Ce lien ne change qu'à la publication d'une version (Actions > « Publish the app » > Run workflow, qui prend
 `versionName` de `app/build.gradle.kts`), jamais à un simple push. Chaque version s'installe par-dessus la précédente.
+Réglage : `.github/workflows/release-apk.yml` (variable `PUBLIC_REPO`, secret `PUBLIC_REPO_TOKEN`).
 
 Un FM-1 émulé sur Android (cœur : [fm1-emu](https://github.com/joakimeriksson/fm1-emu), MIT) qui
 mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MIDI de ce FM-1.
@@ -15,6 +17,49 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- audio USB ---> AudioRecord ---+
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
+
+## v0.25 : choisir le passage d'un fichier long (écran « Passage 1 »)
+- **L'écran du passage** (`PassageView.kt`) : tout le fichier en haut avec la fenêtre du passage à glisser ; le passage
+  en grand, la grille des mesures depuis son début (au tempo du moment) et les attaques marquées, deux poignées à
+  tirer ; début, durée, fin, avec ◀ ▶ (10 ms) ; la longueur en mesures (libre, 1, 2, 4, 8, 16 : grisée au-delà de
+  30 s) ; l'aimant au lâcher (aux attaques à 80 ms près, au passage par zéro, aucun) ; « Écouter en boucle » (par la
+  tranche BOUCLES) ; OK garde le passage.
+- **Quand** : tout seul quand un fichier de plus de 30 s est choisi ; à tout moment par le bouton [ ] de chaque piste
+  (et « Passage » dans les réglages de la boucle). Le passage est gardé et rechargé au démarrage.
+- **Moteur** (`loops.rs`) : le fichier entier gardé à son débit (10 min au plus), ses crêtes, ses attaques, le zéro le
+  plus proche, l'aperçu en boucle, la découpe vers une case ; le rééchantillonnage passe par une table (30 s à 48 kHz :
+  0,09 s au lieu de 1,4 s sur le serveur). Les fichiers sont lus en flux (`WavStream.kt`), sans tout garder en mémoire.
+
+## v0.24 : les boucles au mixeur et dans les effets
+- **Mixeur** : une tranche BOUCLES fine entre FM-1 et MASTER (maquette « Mixeur 2 » validée) : allumer/couper, fader,
+  vumètre, sans EQ (chaque boucle a son volume dans ses réglages). Aussi dans Réglages > Mixeur.
+- **Effets** : l'envoi devient un sélecteur compact TOUT / ÉMU / FM-1 / BOUCLES. BOUCLES n'envoie que les boucles ;
+  TOUT reste les deux FM-1, sauf avec le réglage « Aussi dans TOUT (effets) » (Réglages > Mixeur > Boucles).
+
+## v0.23 : le lecteur de boucles (page « Boucles », zone du milieu)
+- **Quatre cases**, une piste chacune (maquette B validée) : le bouton (noir vide, contour vert chargée et arrêtée,
+  rouge en attente de son départ, vert joue), le nom et la durée, la forme d'onde avec la tête de lecture, les modes
+  → ← ↔ 1× (en avant, à l'envers, aller-retour, une seule fois) et le pas de départ. En tête : le tempo (horloge MIDI
+  du FM-1, sinon TAP : toucher = TAP) et STOP (tout, tout de suite).
+- **Départ calé sur l'horloge** : au prochain temps, mesure, 2 ou 4 mesures (toucher le pas le fait tourner). Avec
+  l'horloge du FM-1, le départ est placé là où son son de ce temps passe dans le mix (son retard USB compté). Sans
+  horloge et sans rien qui joue, la première boucle part tout de suite et pose la mesure. **Arrêt** au même pas, tout
+  de suite ou à la fin du passage (un deuxième toucher : tout de suite).
+- **Fichiers** : WAV (ceux de l'app et la plupart des autres), coupés à 30 s, remis à 44,1 kHz stéréo au chargement
+  (5,3 Mo par boucle de 30 s) ; les cases et leurs réglages sont gardés et rechargés au démarrage. Appui sur le nom ou
+  la forme d'onde : réglages (fichier, lecture, départ, arrêt, volume, vider).
+- **Mix** : les boucles sortent au niveau du master, dans l'enregistrement « Le mix » (pas dans « Deux pistes »).
+- **Moteur** : `native/src/loops.rs` (lecture à l'échantillon près, fondus de 1,5 ms à l'entrée et 5 ms à l'arrêt,
+  rééchantillonnage sinc fenêtré au chargement), tests `cargo test loops` ; il sait aussi partir sur un évènement
+  (note MIDI, Start, fin d'une autre case, seuil), non proposé dans l'app pour garder simple.
+
+## v0.22 : envoi d'échantillons vers LOOM-8 gelé
+- **Découpeur** : l'envoi des morceaux et des boucles dans la banque de LOOM-8 est gelé (pas encore testé sur un vrai
+  FM-1) : rien n'est envoyé au FM-1, pas même la détection ; la partie « Vers le FM-1 » le dit et renvoie à l'export
+  WAV (puis à la page Samples du site de LOOM-8). Le code reste : `SampleTargets.SEND_ENABLED` à remettre à `true`
+  pour le tester. PANEL MIDI n'est pas concerné.
+- **Publication** : les versions peuvent aller dans un dépôt public à part (FM1-Mix), avec leur code source joint,
+  pendant que ce dépôt reste privé.
 
 ## v0.21 : les 26 effets du brief, avec la convention de jeu live
 - **La convention** (`native/src/fx.rs`, profils dans `assets/fx_profiles.json`) : X = quoi (à gauche sombre, lent,

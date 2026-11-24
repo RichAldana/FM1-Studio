@@ -5,5 +5,6 @@ pub mod recorder;
 pub mod dsp;
 pub mod state;
 pub mod fx;
+pub mod loops;
 pub mod hint;
 mod jni_api;

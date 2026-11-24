@@ -61,7 +61,7 @@ object Native {
     external fun fxSelect(index: Int)
     /** the finger on the pad: x, y 0..1 (y = 0 at the bottom) */
     external fun fxTouch(x: Float, y: Float, down: Boolean)
-    /** what it is on: 0 everything, 1 the emulated FM-1, 2 the real one */
+    /** what it is on: 0 everything, 1 the emulated FM-1, 2 the real one, 3 the loops */
     external fun fxTarget(target: Int)
     external fun fxHold(on: Boolean)
     external fun fxSetBpm(bpm: Float)
@@ -88,4 +88,36 @@ object Native {
     external fun recStop(): String
     /** out = [frames at 44.1 kHz, blocks dropped, 1 while recording] */
     external fun recStats(out: LongArray)
+
+    // the loop player (native/src/loops.rs, LoopsView.kt)
+    /** A sound into [slot]: [data] interleaved by [channels] at [rate], cut at 30 s. Its length (s), or -1. */
+    external fun loopLoad(slot: Int, data: FloatArray, channels: Int, rate: Int): Float
+    external fun loopClear(slot: Int)
+    /** dir 0 forward 1 reverse 2 ping-pong; trig 0 clock 1 touch 2 note 3 Start 4 after a slot 5 level; stop 0 now 1 bar 2 end */
+    external fun loopSet(slot: Int, dir: Int, once: Boolean, trig: Int, quant: Int, note: Int, after: Int, levelDb: Float, stop: Int, gain: Float)
+    /** the slot's button: plays, arms, disarms or stops */
+    external fun loopTap(slot: Int)
+    external fun loopStopAll()
+    /** the next note heard becomes [slot]'s (-1: stop listening) */
+    external fun loopLearn(slot: Int)
+    /** out (16) = per slot [state (0 empty 1 ready 2 armed 3 playing 4 stopping), where it plays 0..1, length s, note] */
+    external fun loopInfo(out: FloatArray)
+    /** the loops strip's volume (1 as is, 0 off) */
+    external fun loopGain(g: Float)
+    /** the pad's TOUT takes the loops too (else only its BOUCLES) */
+    external fun fxLoopsInAll(on: Boolean)
+
+    // the passage screen (PassageView.kt): a whole file at its own rate, its preview, the passage into a slot
+    external fun loopSrcBegin(rate: Int, frames: Int)
+    /** the first [n] values of [data], interleaved by [channels]; the frames so far */
+    external fun loopSrcAppend(data: FloatArray, n: Int, channels: Int): Int
+    external fun loopSrcEnd(): Int
+    external fun loopSrcFree()
+    /** the loudest of each part of frames from..to, as many parts as [out] holds */
+    external fun loopSrcPeaks(from: Int, to: Int, out: FloatArray)
+    external fun loopSrcOnsets(): IntArray?
+    external fun loopSrcZero(at: Int, radius: Int): Int
+    external fun loopSrcPreview(a: Int, b: Int, on: Boolean)
+    /** frames a..b into [slot]: its length (s), or -1 */
+    external fun loopSrcCommit(slot: Int, a: Int, b: Int): Float
 }

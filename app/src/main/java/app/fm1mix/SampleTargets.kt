@@ -19,6 +19,13 @@ import android.media.midi.MidiManager
  */
 object SampleTargets {
 
+    /**
+     * Sending samples into a firmware: frozen (0.22) until it has been tried on a real LOOM-8. While false the slicer
+     * sends nothing to the FM-1 (not even the detection's SB_PING) and offers the WAV export only. PANEL MIDI
+     * (PanelRemote) is not concerned.
+     */
+    const val SEND_ENABLED = false
+
     /** What the slicer may send to a firmware. */
     class Can(val loop: Boolean, val oneShots: Boolean, val maxSamples: Int, val note: String)
 

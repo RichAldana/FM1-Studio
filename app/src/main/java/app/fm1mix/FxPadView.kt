@@ -78,7 +78,7 @@ object FxState {
     var catalog: FxCatalog? = null
     var selected = -1          // the engine's index, -1 none
     var type = ""
-    var target = 0             // 0 everything, 1 the emulated FM-1, 2 the real one
+    var target = 0             // 0 both FM-1s (and the loops if the setting says so), 1 the emulated FM-1, 2 the real one, 3 the loops
     var hold = false
     /** the real FM-1 is played by the FM-1 itself (output on the FM-1): it cannot go through the pad then */
     var fm1Out = false
@@ -92,7 +92,7 @@ object FxState {
         views.forEach { it.invalidate() }
     }
 
-    val TARGETS = arrayOf(tr("TOUT", "ALL"), tr("ÉMULÉ", "EMULATED"), "FM-1")
+    val TARGETS = arrayOf(tr("TOUT", "ALL"), tr("ÉMU", "EMU"), "FM-1", tr("BOUCLES", "LOOPS"))
 }
 
 /**
@@ -213,11 +213,32 @@ class FxPadView(ctx: Context) : View(ctx) {
         // row 3: the send, HOLD, the tempo
         val y3 = rowTop(2) + (rh - ch) / 2f
         var x3 = 12f * d
-        for (i in 0 until 3) {
+        // the send: one compact selector, TOUT / ÉMU / FM-1 / BOUCLES
+        p.textSize = 11.5f * d; p.typeface = Typeface.DEFAULT_BOLD; p.textAlign = Paint.Align.CENTER
+        val segW = FxState.TARGETS.map { p.measureText(it) + 16f * d }
+        r.set(x3, y3, x3 + segW.sum(), y3 + ch)
+        p.style = Paint.Style.STROKE; p.strokeWidth = 1.5f * d; p.color = 0xFF5A5C62.toInt()
+        c.drawRoundRect(r, ch / 2f, ch / 2f, p)
+        p.style = Paint.Style.FILL
+        val box = RectF(r)
+        var sx = x3
+        for (i in FxState.TARGETS.indices) {
             val enabled = !(i == 2 && s.fm1Out)
-            x3 = chip(c, x3, y3, ch, FxState.TARGETS[i], s.target == i, enabled) { s.target = i; s.onChange?.invoke(); s.send() }
+            val seg = RectF(sx, y3, sx + segW[i], y3 + ch)
+            if (s.target == i) {
+                c.save(); c.clipRect(seg)
+                p.color = amber; c.drawRoundRect(box, ch / 2f, ch / 2f, p)
+                c.restore()
+            } else if (i > 0 && s.target != i - 1) {
+                p.color = 0xFF45474D.toInt(); c.drawRect(sx - 0.5f * d, y3 + 6f * d, sx + 0.5f * d, y3 + ch - 6f * d, p)
+            }
+            p.color = when { s.target == i -> 0xFF1E1F22.toInt(); !enabled -> 0xFF5A5C62.toInt(); i == 3 -> 0xFF9FD8A6.toInt(); else -> 0xFFD9D6CE.toInt() }
+            c.drawText(FxState.TARGETS[i], seg.centerX(), seg.centerY() + 4.2f * d, p)
+            if (enabled) chips.add(Pair(seg, { s.target = i; s.onChange?.invoke(); s.send() }))
+            sx += segW[i]
         }
-        x3 = chip(c, x3 + 6f * d, y3, ch, "HOLD", s.hold, true) { s.hold = !s.hold; s.onChange?.invoke(); s.send() }
+        x3 = sx + 6f * d
+        x3 = chip(c, x3, y3, ch, "HOLD", s.hold, true) { s.hold = !s.hold; s.onChange?.invoke(); s.send() }
         Native.fxInfo(info)
         p.typeface = Typeface.DEFAULT_BOLD; p.textSize = 12f * d; p.textAlign = Paint.Align.RIGHT
         val tapW = p.measureText("TAP") + 24f * d

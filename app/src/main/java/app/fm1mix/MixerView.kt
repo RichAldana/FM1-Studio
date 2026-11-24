@@ -13,27 +13,32 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The mixer on a desk: a strip each for the emulated FM-1, the real one and the master. Each has its three EQ knobs
+ * The mixer on a desk: a strip each for the emulated FM-1, the real one, the loops and the master. Each has its three EQ knobs
  * (low, mid, high, ±12 dB: drag up or down, a double tap back to 0), a fader (0 to 150 %, a double tap back to
  * 100 %), and a meter with a clip light (red for a second and a half when it would clip; on the master, the
  * limiter's work). Moves go out at once through [onVol] and [onEq]; the activity keeps them per firmware. The strip's
  * name is its on/off button ([onMute]): off, the strip is silent and drawn dim, its fader and EQ kept.
+ * The loops' strip (strip 3, drawn third, before the master) is a slim one: on/off, fader and meter, no EQ (each
+ * loop has its volume in its settings).
  */
 class MixerView(ctx: Context) : View(ctx) {
     var onVol: ((strip: Int, pct: Int) -> Unit)? = null
     var onEq: ((strip: Int, band: Int, db: Int) -> Unit)? = null
     var onMute: ((strip: Int, off: Boolean) -> Unit)? = null
     /** the strips turned off */
-    val off = BooleanArray(3)
-    val vol = intArrayOf(100, 100, 100)
+    val off = BooleanArray(4)
+    val vol = intArrayOf(100, 100, 100, 100)
     /** [strip * 3 + band], dB */
     val eq = IntArray(9)
     /** the limiter's reduction now, dB (≤ 0) */
     var limiterDb = 0f
 
-    private val names = arrayOf(tr("ÉMULÉ", "EMULATED"), "FM-1", "MASTER")
-    private val level = FloatArray(3)
-    private val clipAt = LongArray(3)
+    private val names = arrayOf(tr("ÉMULÉ", "EMULATED"), "FM-1", "MASTER", tr("BOUCLES", "LOOPS"))
+    private val level = FloatArray(4)
+    private val clipAt = LongArray(4)
+    /** the strips left to right, and their widths (the loops' slim) */
+    private val order = intArrayOf(0, 1, 3, 2)
+    private val weight = floatArrayOf(1f, 1f, 1f, 0.7f)      // by strip
     private val d = ctx.resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val r = RectF()
@@ -41,13 +46,13 @@ class MixerView(ctx: Context) : View(ctx) {
 
     private class Grab(val strip: Int, val band: Int, var y: Float, val start: Int)   // band -1: the fader
     private val grabs = SparseArray<Grab>()
-    private val lastTap = LongArray(12)
+    private val lastTap = LongArray(16)
 
     /** the peaks since the last refresh (1 = full scale; above, it would clip) */
-    fun levels(emu: Float, ext: Float, out: Float) {
+    fun levels(emu: Float, ext: Float, out: Float, loops: Float) {
         val now = System.currentTimeMillis()
-        val v = floatArrayOf(emu, ext, out)
-        for (i in 0 until 3) {
+        val v = floatArrayOf(emu, ext, out, loops)
+        for (i in 0 until 4) {
             level[i] = max(v[i], level[i] * 0.86f)
             if (v[i] >= 0.999f) clipAt[i] = now
         }
@@ -55,34 +60,40 @@ class MixerView(ctx: Context) : View(ctx) {
     }
 
     fun set(volumes: IntArray, eqDb: IntArray, muted: BooleanArray) {
-        System.arraycopy(volumes, 0, vol, 0, 3)
-        System.arraycopy(muted, 0, off, 0, 3)
+        System.arraycopy(volumes, 0, vol, 0, 4)
+        System.arraycopy(muted, 0, off, 0, 4)
         System.arraycopy(eqDb, 0, eq, 0, 9)
         invalidate()
     }
 
     // geometry, per strip
-    private fun sw() = width / 3f
+    private fun unit() = width / weight.sum()
+    private fun sw(s: Int) = unit() * weight[s]
+    private fun x0(s: Int): Float { var x = 0f; for (o in order) { if (o == s) return x; x += sw(o) }; return x }
+    private fun stripAt(x: Float): Int { var a = 0f; for (o in order) { a += sw(o); if (x < a) return o }; return order.last() }
+    private fun hasEq(s: Int) = s != 3
     private fun knobY() = 50f * d
-    private fun knobR() = min(sw() / 9f, 15f * d)
-    private fun knobX(s: Int, b: Int) = s * sw() + sw() * (0.2f + 0.3f * b)
+    private fun knobR() = min(sw(0) / 9f, 15f * d)
+    private fun knobX(s: Int, b: Int) = x0(s) + sw(s) * (0.2f + 0.3f * b)
     private fun faderTop() = knobY() + knobR() + 34f * d
     private fun faderBot() = height - 26f * d
-    private fun faderX(s: Int) = s * sw() + sw() * 0.40f
-    private fun meterX(s: Int) = s * sw() + sw() * 0.64f
+    private fun faderX(s: Int) = x0(s) + sw(s) * if (hasEq(s)) 0.40f else 0.36f
+    private fun meterX(s: Int) = x0(s) + sw(s) * if (hasEq(s)) 0.64f else 0.78f
     private fun volY(pct: Int) = faderBot() - (faderBot() - faderTop()) * pct / 150f
 
     override fun onDraw(c: Canvas) {
         c.drawColor(0xFF2B2D31.toInt())
         val now = System.currentTimeMillis()
-        for (s in 0 until 3) {
-            val x0 = s * sw()
-            if (s > 0) { p.color = 0xFF222327.toInt(); c.drawRect(x0 - 1f * d, 8f * d, x0 + 1f * d, height - 8f * d, p) }
+        for (s in order) {
+            val x0 = x0(s)
+            val sw = sw(s)
+            if (x0 > 0f) { p.color = 0xFF222327.toInt(); c.drawRect(x0 - 1f * d, 8f * d, x0 + 1f * d, height - 8f * d, p) }
             // the name: the strip's on/off button, a light on its left
             p.textAlign = Paint.Align.CENTER; p.typeface = Typeface.DEFAULT_BOLD; p.textSize = 12f * d
+            if (p.measureText(names[s]) + 30f * d > sw - 4f * d) p.textSize = 10.5f * d
             val tw = p.measureText(names[s])
-            val bw = tw + 30f * d
-            val bx = x0 + sw() / 2f - bw / 2f
+            val bw = minOf(tw + 30f * d, sw - 2f * d)
+            val bx = x0 + sw / 2f - bw / 2f
             r.set(bx, 4f * d, bx + bw, 24f * d)
             p.style = Paint.Style.FILL
             p.color = if (off[s]) 0xFF4A2326.toInt() else 0xFF1F2023.toInt()
@@ -93,10 +104,15 @@ class MixerView(ctx: Context) : View(ctx) {
             p.style = Paint.Style.FILL
             p.color = if (off[s]) 0xFF6B3236.toInt() else 0xFF62D36E.toInt()
             c.drawCircle(bx + 10f * d, 14f * d, 3.5f * d, p)
-            p.color = if (off[s]) 0xFFE5534B.toInt() else if (s == 2) amber else 0xFFD9D6CE.toInt()
-            c.drawText(names[s], bx + 17f * d + tw / 2f, 18.5f * d, p)
+            p.color = if (off[s]) 0xFFE5534B.toInt() else if (s == 2) amber else if (s == 3) 0xFF9FD8A6.toInt() else 0xFFD9D6CE.toInt()
+            c.drawText(names[s], minOf(bx + 17f * d + tw / 2f, bx + bw - 6f * d - tw / 2f), 18.5f * d, p)
+            if (!hasEq(s)) {                                   // the loops: no EQ, a word instead
+                p.typeface = Typeface.DEFAULT; p.textSize = 9.5f * d; p.color = 0xFF8E8C87.toInt()
+                c.drawText(tr("sans EQ", "no EQ"), x0 + sw / 2f, knobY() - 2f * d, p)
+                c.drawText(tr("(par boucle)", "(per loop)"), x0 + sw / 2f, knobY() + 11f * d, p)
+            }
             // EQ knobs
-            for (b in 0 until 3) {
+            for (b in 0 until (if (hasEq(s)) 3 else 0)) {
                 val cx = knobX(s, b)
                 val cy = knobY()
                 val kr = knobR()
@@ -145,14 +161,14 @@ class MixerView(ctx: Context) : View(ctx) {
             c.drawCircle(mx, ft - 9f * d, 4f * d, p)
             // the value, and on the master the limiter
             p.textSize = 11f * d; p.color = 0xFFB8B5AE.toInt()
-            c.drawText("${vol[s]} %", x0 + sw() / 2f, height - 8f * d, p)
+            c.drawText("${vol[s]} %", x0 + sw / 2f, height - 8f * d, p)
             if (s == 2 && limiterDb < -0.5f) {
                 p.color = amber; p.textAlign = Paint.Align.LEFT; p.textSize = 10f * d
                 c.drawText("LIM %.0f".format(limiterDb), mx + 8f * d, ft - 5f * d, p)
             }
             if (off[s]) {                                   // off: the strip under a veil
                 p.color = 0x992B2D31.toInt()
-                c.drawRect(x0, 27f * d, x0 + sw(), height.toFloat(), p)
+                c.drawRect(x0, 27f * d, x0 + sw, height.toFloat(), p)
             }
         }
         if (clipAt.any { now - it < 1500 }) postInvalidateDelayed(250)
@@ -160,9 +176,9 @@ class MixerView(ctx: Context) : View(ctx) {
 
     /** what a touch at x, y takes: an EQ knob (strip, band) or the strip's fader (band -1) */
     private fun hit(x: Float, y: Float): Pair<Int, Int> {
-        val s = (x / sw()).toInt().coerceIn(0, 2)
-        if (y < faderTop() - 14f * d) {
-            val b = ((x - s * sw()) / sw() * 3f).toInt().coerceIn(0, 2)
+        val s = stripAt(x)
+        if (hasEq(s) && y < faderTop() - 14f * d) {
+            val b = ((x - x0(s)) / sw(s) * 3f).toInt().coerceIn(0, 2)
             return Pair(s, b)
         }
         return Pair(s, -1)
@@ -173,7 +189,7 @@ class MixerView(ctx: Context) : View(ctx) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = e.actionIndex
                 if (e.getY(i) < 27f * d) {                          // the name: on / off
-                    val s = (e.getX(i) / sw()).toInt().coerceIn(0, 2)
+                    val s = stripAt(e.getX(i))
                     off[s] = !off[s]
                     onMute?.invoke(s, off[s])
                     invalidate()

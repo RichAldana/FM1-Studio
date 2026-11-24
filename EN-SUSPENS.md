@@ -18,6 +18,17 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
   long ; (3) vérifier le niveau d'entrée (Clouds attend un signal fort) et la position de lecture.
 - Options du brief non faites : la pression du doigt sur Y, l'écran de debug (latence, CPU par effet), Ableton Link.
 
+## Lecteur de boucles (0.23)
+- Fait en 0.24 : la tranche BOUCLES fine au mixeur, l'envoi BOUCLES aux effets (et l'option « aussi dans TOUT »).
+- Fait en 0.25 : l'écran du passage (fichiers longs : quelle partie, aimant aux attaques, écoute).
+- Plus tard, si besoin : suivre le tempo (vitesse ou étirement), d'autres formats que le WAV (MP3, M4A), plusieurs
+  groupes de 4, le départ sur évènement (déjà dans le moteur), les boucles dans « Deux pistes ».
+- À vérifier en jeu : le calage sur l'horloge du FM-1 (s'il faut un réglage de décalage).
+
+## Envoi d'échantillons vers LOOM-8 (découpeur) : gelé en 0.22
+- Jamais testé sur un vrai FM-1 : gelé (`SampleTargets.SEND_ENABLED = false`), l'export WAV seul. À tester un jour
+  avec une banque sauvegardée d'abord (page Backup du site de LOOM-8), puis remettre à `true`.
+
 ## Sensibilité des potards (encodeurs) : toujours un problème
 - Constat : des sauts de valeur restent, au doigt sur l'écran comme depuis le FM-1 (PANEL MIDI).
 - Ce que fait RemoteFM1 (Quixotic7, même protocole que notre PANEL MIDI) :
@@ -100,6 +111,9 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
   `https://github.com/RichAldana/FM1-Studio/releases/latest/download/fm1mix.apk`. Signé avec la clé du dépôt
   (`app/debug.keystore`) : les versions s'installent l'une sur l'autre. Reste ci-dessous : la clé privée, la page,
   les mises à jour dans l'app, Obtainium.
+- 0.22 : le dépôt étant privé, le lien ne marchait que pour toi. Le workflow peut publier dans un dépôt public à part
+  (`RichAldana/FM1-Mix`, variable `PUBLIC_REPO` et secret `PUBLIC_REPO_TOKEN`), avec le code source joint à chaque
+  version (GPL-3.0). Lien pour tous : `https://github.com/RichAldana/FM1-Mix/releases/latest/download/fm1mix.apk`.
 - LOOM-8 PANEL MIDI : site et installateur web préparés pour LOOM8-Remote (`pages.yml`, appelé par `release.yml`
   sur un tag `v0.18.2-pm1`), lien `https://richaldana.github.io/LOOM8-Remote/install/`.
 - Une page (GitHub Pages) avec un bouton « Installer » qui pointe toujours vers le dernier APK publié, la version et les

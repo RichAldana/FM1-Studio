@@ -30,7 +30,7 @@ import java.security.MessageDigest
  * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
 /** shown in About and in error reports; keep in step with versionName (app/build.gradle.kts) */
-const val APP_VERSION = "0.21"
+const val APP_VERSION = "0.25"
 
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView
@@ -41,7 +41,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var keysPanel: PanelView
     private lateinit var recView: RecorderView
     private lateinit var mixView: MixerView
-    private val m4 = FloatArray(4)
+    /** the loop player (Loops.kt, native/src/loops.rs): its page in the middle zone */
+    private val loopBank by lazy { LoopBank(this) }
+    private lateinit var loopsView: LoopsView
+    private var pickSlot = 0
+    private val m4 = FloatArray(5)        // the peaks: emulated, real, what plays, what is recorded, the loops
     private val statPeak = FloatArray(2)
     private lateinit var recBtn: TextView
     private var recSize = 17f
@@ -79,8 +83,10 @@ class MainActivity : ComponentActivity() {
     private var balEmuPct = 0                       // -100 left .. 100 right
     private var balExtPct = 0
     private var masterPct = 100
-    /** the mixer's on/off: the emulated FM-1 (its firmware's), the real one, the master */
-    private val muted = BooleanArray(3)
+    /** the loops' strip (its fader; each loop has its own volume too) */
+    private var loopPct = 100
+    /** the mixer's on/off: the emulated FM-1 (its firmware's), the real one, the master, the loops */
+    private val muted = BooleanArray(4)
     /** the emulated keyboard's octave as the app follows it (OCT- / OCT+ pressed on the screen or the FM-1's panel) */
     private var octave = 0
     /** the EQs' bands in dB: [source * 3 + band], sources EQ_EMU, EQ_EXT, EQ_MASTER, bands low, mid, high */
@@ -122,6 +128,19 @@ class MainActivity : ComponentActivity() {
             selectFirmware("file:$name")
         }
     }
+    private val pickLoop = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val i = pickSlot
+        // longer than 30 s: the passage screen first; else in as it is
+        loopBank.probe(uri) { sec, err ->
+            when {
+                sec == null -> Toast.makeText(this, tr("Boucle ${i + 1} : ", "Loop ${i + 1}: ") + err, Toast.LENGTH_LONG).show()
+                sec > 30.05 -> openPassage(i, uri)
+                else -> loopBank.load(i, uri) { e -> if (e.isNotEmpty()) Toast.makeText(this, e, Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+    private var passage: android.app.Dialog? = null
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (running) { audio.stop(); audioMsg = audio.start(ok) }
     }
@@ -153,6 +172,9 @@ class MainActivity : ComponentActivity() {
         masterPct = prefs.getInt("master", 100)
         muted[1] = prefs.getBoolean("muteExt", false)
         muted[2] = prefs.getBoolean("muteMaster", false)
+        muted[3] = prefs.getBoolean("muteLoop", false)
+        loopPct = prefs.getInt("gLoop", 100)
+        Native.fxLoopsInAll(prefs.getBoolean("fxLoopsInAll", false))
         for (i in 3 until 9) eqDb[i] = prefs.getInt("eq$i", 0)
         outTarget = prefs.getInt("out", AudioIo.OUT_FM1)
         lowLatency = prefs.getBoolean("lowLatency", false)
@@ -189,7 +211,15 @@ class MainActivity : ComponentActivity() {
             onMute = { s, off -> setMuted(s, off) }
         }
         loadEffects()
-        val mid = SwipeZone(this, listOf(panel, recView, FxPadView(this)), listOf("FM-1", tr("Enregistreur", "Recorder"), tr("Effets", "Effects")),
+        loopsView = LoopsView(this, loopBank).apply {
+            onPick = { i -> pickSlot = i; pickLoop.launch(arrayOf("audio/wav", "audio/x-wav", "audio/wave", "audio/*")) }
+            onSettings = { i -> loopSettings(i) }
+            onPassage = { i -> loopBank.slots[i].uri?.let { openPassage(i, android.net.Uri.parse(it)) } }
+        }
+        loopBank.onChange = { loopsView.invalidate() }
+        loopBank.restore()
+        val mid = SwipeZone(this, listOf(panel, recView, FxPadView(this), loopsView),
+            listOf("FM-1", tr("Enregistreur", "Recorder"), tr("Effets", "Effects"), tr("Boucles", "Loops")),
             prefs.getInt("pageMid", 0)) { prefs.edit().putInt("pageMid", it).apply() }
         val bottom = SwipeZone(this, listOf(keysPanel, mixView), listOf(tr("Clavier", "Keyboard"), tr("Mixeur et EQ", "Mixer and EQ")),
             prefs.getInt("pageBottom", 0).coerceIn(0, 1)) { prefs.edit().putInt("pageBottom", it).apply() }
@@ -621,7 +651,8 @@ class MainActivity : ComponentActivity() {
             keysPanel.update(px, leds)
             // the peaks of this frame: the mixer's meters, the recorder's wave, the status line's
             Native.meters(m4)
-            mixView.levels(m4[0], m4[1], m4[2])
+            mixView.levels(m4[0], m4[1], m4[2], m4[4])
+            loopsView.update()
             if (recorder.recording) recView.addPeak(m4[3])
             statPeak[0] = maxOf(statPeak[0], m4[0]); statPeak[1] = maxOf(statPeak[1], m4[1])
             panelRemote.lights(leds)
@@ -661,6 +692,104 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ------------------------------------------------------------------ the loops
+
+    /** a slot's settings: its file, when it starts (on the clock), how it stops, its volume */
+    private fun loopSettings(i: Int) {
+        val s = loopBank.slots[i]
+        val sh = Sheet(this).onClose { sheet = null }
+        sheet = sh
+        sh.show(tr("Boucle ${i + 1}", "Loop ${i + 1}") + if (s.name.isNotEmpty()) " · ${s.name}" else "") {
+            group(tr("Fichier", "File"))
+            nav(if (s.name.isEmpty()) tr("Choisir un WAV", "Choose a WAV") else s.name,
+                if (s.seconds > 0f) "%.1f s".format(s.seconds) else null,
+                tr("Toucher pour en prendre un autre (30 s au plus)", "Tap to take another (30 s at most)")) {
+                sh.close(); pickSlot = i; pickLoop.launch(arrayOf("audio/wav", "audio/x-wav", "audio/wave", "audio/*"))
+            }
+            if (s.uri != null) nav(tr("Passage", "Passage"), "%.1f → %.1f s".format(s.from, s.to),
+                if (s.fileSec > 0f) tr("dans un fichier de %.0f s", "in a file of %.0f s").format(s.fileSec) else null) {
+                sh.close(); openPassage(i, android.net.Uri.parse(s.uri))
+            }
+            group(tr("Lecture", "Playback"))
+            for ((d, name) in listOf(0 to tr("En avant →", "Forward →"), 1 to tr("À l'envers ←", "Backward ←"), 2 to tr("Aller-retour ↔ (ping-pong)", "Back and forth ↔ (ping-pong)")))
+                choice(name, null, s.dir == d) { s.dir = d; loopBank.apply(i); sh.refresh() }
+            toggle(tr("Une seule fois (1×)", "Once (1×)"), tr("Sinon elle tourne jusqu'à l'arrêt", "Otherwise it goes round until stopped"), s.once) { s.once = it; loopBank.apply(i) }
+            group(tr("Départ, calé sur l'horloge", "Start, on the clock"))
+            for (q in LoopBank.QUANTS) choice(tr("Au prochain ", "On the next ") + LoopBank.quantName(q), null, s.quant == q) { s.quant = q; loopBank.apply(i); sh.refresh() }
+            group(tr("Arrêt", "Stop"))
+            for ((k, name) in listOf(1 to tr("Au même pas que le départ", "On the same step as the start"), 0 to tr("Tout de suite", "At once"), 2 to tr("À la fin du passage", "At the end of the pass")))
+                choice(name, null, s.stop == k) { s.stop = k; loopBank.apply(i); sh.refresh() }
+            group(tr("Volume", "Volume"))
+            slider(tr("Volume", "Volume"), s.volPct, 0, 150, { "$it %" }) { s.volPct = it; loopBank.apply(i) }
+            if (s.uri != null) {
+                group()
+                action(tr("Vider la case", "Empty the slot"), danger = true) { loopBank.clear(i); sh.close() }
+            }
+            note(tr("Horloge : celle du FM-1 (MIDI) quand elle arrive, sinon le tempo de TAP. Une boucle part sur le prochain ",
+                    "Clock: the FM-1's (MIDI) when it comes, else TAP's tempo. A loop starts on the next ") +
+                tr("pas choisi, calée sur le son du FM-1 tel qu'on l'entend. Sans horloge MIDI et sans rien qui joue, la première ",
+                    "step chosen, lined up with the FM-1's sound as heard. With no MIDI clock and nothing playing, the first ") +
+                tr("boucle part tout de suite et pose la mesure.", "loop starts at once and sets the bar."))
+        }
+    }
+
+    /**
+     * The passage screen (PassageView): the file read whole into the engine (off the screen's thread), then the part
+     * slot [i] plays chosen, heard, and kept with OK.
+     */
+    private fun openPassage(i: Int, uri: android.net.Uri) {
+        passage?.dismiss()
+        val s = loopBank.slots[i]
+        val same = s.uri == uri.toString()
+        val v = PassageView(this, tr("Boucle ${i + 1} · le passage", "Loop ${i + 1} · the passage"), loopBank.displayName(uri))
+        val dlg = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar)
+        dlg.setContentView(v)
+        // (drawn edge to edge on Android 15: kept clear of the status and navigation bars)
+        ViewCompat.setOnApplyWindowInsetsListener(v) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+        passage = dlg
+        var rate = 0
+        var fileSec = 0f
+        dlg.setOnDismissListener {
+            Native.loopSrcPreview(0, 0, false)
+            loopBank.background { Native.loopSrcFree() }
+            if (passage === dlg) passage = null
+        }
+        v.onBack = { dlg.dismiss() }
+        v.onOk = { a, b ->
+            Native.loopSrcPreview(0, 0, false)
+            loopBank.commit(i, uri, rate, a, b, fileSec) { err ->
+                if (err.isNotEmpty()) Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                dlg.dismiss()
+            }
+        }
+        dlg.show()
+        loopBank.background {
+            runCatching {
+                val w = WavStream.open(this, uri)
+                val total = minOf(w.frames, (600.0 * w.rate).toLong())
+                Native.loopSrcBegin(w.rate, total.toInt())
+                var read = 0L
+                w.read(0, total, 1 shl 15) { data, n ->
+                    Native.loopSrcAppend(data, n, w.channels)
+                    read += n / w.channels
+                    v.progress = read.toFloat() / maxOf(1L, total)
+                }
+                val frames = Native.loopSrcEnd()
+                ui.post {
+                    rate = w.rate; fileSec = w.seconds.toFloat()
+                    val a0 = if (same) (s.from * w.rate).toInt() else 0
+                    val b0 = if (same && s.to > s.from) (s.to * w.rate).toInt() else a0 + 30 * w.rate
+                    v.ready(w.rate, frames, a0, b0)
+                    if (w.frames > total) Toast.makeText(this, tr("Fichier long : ses 10 premières minutes", "Long file: its first 10 minutes"), Toast.LENGTH_LONG).show()
+                }
+            }.onFailure { e -> v.error = e.message ?: e.toString() }
+        }
+    }
+
     // ------------------------------------------------------------------ recording
 
     /** under the recorder's wave */
@@ -671,6 +800,7 @@ class MainActivity : ComponentActivity() {
         when (s) {
             0 -> { gEmuPct = v; applyGains(); fwPut("gEmu", v) }
             1 -> { gExtPct = v; applyGains(); prefs.edit().putInt("gExt", v).apply() }
+            3 -> { loopPct = v; applyGains(); prefs.edit().putInt("gLoop", v).apply() }
             else -> { masterPct = v; prefs.edit().putInt("master", v).apply(); applyMix() }
         }
     }
@@ -735,6 +865,7 @@ class MainActivity : ComponentActivity() {
     private fun applyGains() {
         audio.gEmu = if (muted[0]) 0f else gEmuPct / 100f
         audio.gExt = if (muted[1]) 0f else gExtPct / 100f
+        Native.loopGain(if (muted[3]) 0f else loopPct / 100f)
     }
 
     /** a strip of the mixer turned on or off */
@@ -743,7 +874,8 @@ class MainActivity : ComponentActivity() {
         when (s) {
             0 -> fwPut("muteEmu", if (off) 1 else 0)
             1 -> prefs.edit().putBoolean("muteExt", off).apply()
-            else -> prefs.edit().putBoolean("muteMaster", off).apply()
+            2 -> prefs.edit().putBoolean("muteMaster", off).apply()
+            else -> prefs.edit().putBoolean("muteLoop", off).apply()
         }
         applyGains(); applyMix()
     }
@@ -751,7 +883,7 @@ class MainActivity : ComponentActivity() {
     /** the mixer page as the settings are (they change from the menu too) */
     private fun syncMixer() {
         if (!::mixView.isInitialized) return
-        mixView.set(intArrayOf(gEmuPct, gExtPct, masterPct), eqDb, muted)
+        mixView.set(intArrayOf(gEmuPct, gExtPct, masterPct, loopPct), eqDb, muted)
     }
 
     private fun showRec() {
@@ -1119,13 +1251,18 @@ class MainActivity : ComponentActivity() {
         slider("Volume", gExtPct, 0, 150, { "$it %" }) { gExtPct = it; applyGains(); prefs.edit().putInt("gExt", it).apply(); syncMixer() }
         slider("Balance", balExtPct, -100, 100, { balName(it) }) { balExtPct = snap(it); prefs.edit().putInt("balExt", it).apply(); applyMix() }
         nav("EQ", eqSummary(1)) { sheet?.push(tr("EQ · FM-1 branché", "EQ · plugged FM-1")) { eqPage(1) } }
+        group(tr("Boucles", "Loops"))
+        slider("Volume", loopPct, 0, 150, { "$it %" }) { loopPct = it; applyGains(); prefs.edit().putInt("gLoop", it).apply(); syncMixer() }
+        toggle(tr("Aussi dans TOUT (effets)", "In ALL too (effects)"),
+            tr("Sinon le pad ne les prend qu'avec BOUCLES", "Otherwise the pad takes them only with LOOPS"),
+            prefs.getBoolean("fxLoopsInAll", false)) { prefs.edit().putBoolean("fxLoopsInAll", it).apply(); Native.fxLoopsInAll(it) }
         group(tr("Sortie", "Output"))
         slider("Master", masterPct, 0, 150, { "$it %" }) { masterPct = it; prefs.edit().putInt("master", it).apply(); applyMix() }
         nav("EQ master", eqSummary(2)) { sheet?.push("EQ · master") { eqPage(2) } }
         action(tr("Tout remettre à zéro", "Reset everything")) {
-            gEmuPct = 100; gExtPct = 100; balEmuPct = 0; balExtPct = 0; masterPct = 100
+            gEmuPct = 100; gExtPct = 100; balEmuPct = 0; balExtPct = 0; masterPct = 100; loopPct = 100
             applyGains()
-            prefs.edit().putInt("gExt", 100).putInt("balExt", 0).putInt("master", 100).apply()
+            prefs.edit().putInt("gExt", 100).putInt("balExt", 0).putInt("master", 100).putInt("gLoop", 100).apply()
             fwPut("gEmu", 100); fwPut("balEmu", 0)
             for (i in 0 until 9) { eqDb[i] = 0; putEq(i, 0) }
             applyMix(); sheet?.refresh()

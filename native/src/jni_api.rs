@@ -150,9 +150,13 @@ pub extern "system" fn Java_app_fm1mix_Native_leds(env: JNIEnv, _c: JClass, out:
 
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_meters(env: JNIEnv, _c: JClass, out: JFloatArray) {
-    // [emulated, real, what plays, what is recorded]: 2 values (0..1) or 4 (above 1: it would clip)
-    let n = env.get_array_length(&out).unwrap_or(2).clamp(0, 4) as usize;
-    if n >= 4 {
+    // [emulated, real, what plays, what is recorded, the loops]: 2 values (0..1), 4 or 5 (above 1: it would clip)
+    let n = env.get_array_length(&out).unwrap_or(2).clamp(0, 5) as usize;
+    if n >= 5 {
+        if let Some(m) = with(|e| e.take_meters5()) {
+            let _ = env.set_float_array_region(&out, 0, &m);
+        }
+    } else if n >= 4 {
         if let Some(m) = with(|e| e.take_meters4()) {
             let _ = env.set_float_array_region(&out, 0, &m);
         }
@@ -329,11 +333,11 @@ pub extern "system" fn Java_app_fm1mix_Native_setLimiter(_e: JNIEnv, _c: JClass,
     crate::dsp::LIMIT.store(on != 0, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// An EQ's three bands in dB (-12 .. 12): source 0 the emulated FM-1, 1 the real one, 2 the master.
+/// An EQ's three bands in dB (-12 .. 12): source 0 the emulated FM-1, 1 the real one, 2 the master, 3 the loops.
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_setEq(_e: JNIEnv, _c: JClass, source: jint, low: jfloat, mid: jfloat, high: jfloat) {
     use crate::dsp::{set_f, EQ_DB};
-    if (0..3).contains(&source) {
+    if (0..4).contains(&source) {
         let k = 3 * source as usize;
         set_f(&EQ_DB[k], low.clamp(-12.0, 12.0));
         set_f(&EQ_DB[k + 1], mid.clamp(-12.0, 12.0));
@@ -373,10 +377,10 @@ pub extern "system" fn Java_app_fm1mix_Native_fxTouch(_e: JNIEnv, _c: JClass, x:
     crate::fx::touch(x, y, down != 0);
 }
 
-/// What the effect is on: 0 everything, 1 the emulated FM-1, 2 the real one.
+/// What the effect is on: 0 everything, 1 the emulated FM-1, 2 the real one, 3 the loops.
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_fxTarget(_e: JNIEnv, _c: JClass, t: jint) {
-    crate::fx::TARGET.store(t.clamp(0, 2) as u32, std::sync::atomic::Ordering::Relaxed);
+    crate::fx::TARGET.store(t.clamp(0, 3) as u32, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// HOLD: the effect stays on when the finger lifts.
@@ -426,4 +430,123 @@ pub extern "system" fn Java_app_fm1mix_Native_audioInfo(env: JNIEnv, _c: JClass,
     if let Some((ms, ppm, db)) = with(|e| e.audio_info()) {
         let _ = env.set_float_array_region(&out, 0, &[ms as f32, ppm as f32, db]);
     }
+}
+
+// ------------------------------------------------------------------ the loop player (loops.rs)
+
+/// A sound into a slot: `data` interleaved by `channels` at `rate` (full scale 1.0), cut at 30 s. Returns its length
+/// in seconds, or -1 when it could not.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopLoad(env: JNIEnv, _c: JClass, slot: jint, data: JFloatArray, channels: jint, rate: jint) -> jfloat {
+    let n = env.get_array_length(&data).unwrap_or(0).max(0) as usize;
+    let mut buf = vec![0f32; n];
+    if env.get_float_array_region(&data, 0, &mut buf).is_err() { return -1.0; }
+    let r = std::panic::catch_unwind(|| crate::loops::load(slot.max(0) as usize, &buf, channels.max(0) as usize, rate.max(0) as u32));
+    match r { Ok(Ok(s)) => s as jfloat, _ => -1.0 }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopClear(_e: JNIEnv, _c: JClass, slot: jint) { crate::loops::clear(slot.max(0) as usize); }
+
+/// A slot's settings (loops.rs Settings): direction, once, trigger, the clock's step in beats, the note (-1 any),
+/// the slot it follows, the threshold (dBFS), how it stops, its volume (1: as is).
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSet(
+    _e: JNIEnv, _c: JClass, slot: jint, dir: jint, once: jboolean, trig: jint, quant: jint, note: jint, after: jint,
+    level_db: jfloat, stop: jint, gain: jfloat,
+) {
+    crate::loops::set(slot.max(0) as usize, crate::loops::Settings {
+        dir: dir.clamp(0, 2) as u8, once: once != 0, trig: trig.clamp(0, 5) as u8, quant: quant.clamp(1, 64) as u32,
+        note: note.clamp(-1, 127), after: after.clamp(0, 3) as usize, level_db: level_db.clamp(-60.0, 0.0),
+        stop: stop.clamp(0, 2) as u8, gain: gain.clamp(0.0, 2.0),
+    });
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopTap(_e: JNIEnv, _c: JClass, slot: jint) { crate::loops::tap(slot.max(0) as usize); }
+
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopStopAll(_e: JNIEnv, _c: JClass) { crate::loops::stop_all(); }
+
+/// The next note heard becomes the slot's (-1: stop listening).
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopLearn(_e: JNIEnv, _c: JClass, slot: jint) { crate::loops::learn(slot); }
+
+/// [state, where it plays 0..1, length s, note] per slot (16 values). State: 0 empty, 1 ready, 2 armed, 3 playing,
+/// 4 stopping.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopInfo(env: JNIEnv, _c: JClass, out: JFloatArray) {
+    let _ = env.set_float_array_region(&out, 0, &crate::loops::info());
+}
+
+/// The loops' strip volume (1: as is; 0 when it is off).
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopGain(_e: JNIEnv, _c: JClass, g: jfloat) {
+    crate::loops::GAIN.store(g.clamp(0.0, 2.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The pad's TOUT takes the loops too (else only its BOUCLES).
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxLoopsInAll(_e: JNIEnv, _c: JClass, on: jboolean) {
+    crate::loops::IN_ALL.store(on != 0, std::sync::atomic::Ordering::Relaxed);
+}
+
+// ------------------------------------------------------------------ the passage screen (loops.rs, the source)
+
+/// Start reading a file for the passage screen: its rate, and about how many frames.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcBegin(_e: JNIEnv, _c: JClass, rate: jint, frames: jint) {
+    crate::loops::src_begin(rate.max(1) as u32, frames.max(0) as usize);
+}
+
+/// A piece of it: the first `n` values of `data`, interleaved by `channels`. Returns the frames so far.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcAppend(env: JNIEnv, _c: JClass, data: JFloatArray, n: jint, channels: jint) -> jint {
+    let n = n.max(0) as usize;
+    let mut buf = vec![0f32; n];
+    if env.get_float_array_region(&data, 0, &mut buf).is_err() { return -1; }
+    crate::loops::src_append(&buf, channels.max(0) as usize) as jint
+}
+
+/// The file read: the passage screen's now. Its frames.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcEnd(_e: JNIEnv, _c: JClass) -> jint { crate::loops::src_end() as jint }
+
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcFree(_e: JNIEnv, _c: JClass) { crate::loops::src_free(); }
+
+/// The loudest of each part of frames from..to, as many parts as `out` holds.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcPeaks(env: JNIEnv, _c: JClass, from: jint, to: jint, out: JFloatArray) {
+    let bins = env.get_array_length(&out).unwrap_or(0).max(0) as usize;
+    let p = crate::loops::src_peaks(from.max(0) as usize, to.max(0) as usize, bins);
+    let _ = env.set_float_array_region(&out, 0, &p);
+}
+
+/// The attacks, in frames.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcOnsets(env: JNIEnv, _c: JClass) -> jni::sys::jintArray {
+    let v: Vec<i32> = crate::loops::src_onsets().iter().map(|&f| f as i32).collect();
+    match env.new_int_array(v.len() as i32) {
+        Ok(a) => { let _ = env.set_int_array_region(&a, 0, &v); a.into_raw() }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// The zero crossing nearest `at` within `radius` frames.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcZero(_e: JNIEnv, _c: JClass, at: jint, radius: jint) -> jint {
+    crate::loops::src_zero(at.max(0) as usize, radius.max(0) as usize) as jint
+}
+
+/// The preview: frames a..b round and round, or quiet.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcPreview(_e: JNIEnv, _c: JClass, a: jint, b: jint, on: jboolean) {
+    crate::loops::src_preview(a.max(0) as usize, b.max(0) as usize, on != 0);
+}
+
+/// Frames a..b into slot `slot`: its length in seconds, or -1.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopSrcCommit(_e: JNIEnv, _c: JClass, slot: jint, a: jint, b: jint) -> jfloat {
+    match crate::loops::src_commit(slot.max(0) as usize, a.max(0) as usize, b.max(0) as usize) { Ok(s) => s as jfloat, Err(_) => -1.0 }
 }
