@@ -351,7 +351,7 @@ pub extern "system" fn Java_app_fm1mix_Native_setEq(_e: JNIEnv, _c: JClass, sour
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_fxLoad(mut env: JNIEnv, _c: JClass, json: JString) -> jstring {
     let json: String = match env.get_string(&json) { Ok(s) => s.into(), Err(e) => return jstr(&mut env, &e.to_string()) };
-    let r = std::panic::catch_unwind(|| crate::fx::FxEngine::load(&json)).unwrap_or_else(|_| Err("effects: panic".into()));
+    let r = std::panic::catch_unwind(|| crate::fx::FxBank::load(&json)).unwrap_or_else(|_| Err("effects: panic".into()));
     match r {
         Ok(e) => { *crate::fx::ENGINE.lock().unwrap() = Some(e); jstr(&mut env, "") }
         Err(e) => jstr(&mut env, &e),
@@ -367,25 +367,33 @@ pub extern "system" fn Java_app_fm1mix_Native_fxList(mut env: JNIEnv, _c: JClass
     jstr(&mut env, &s)
 }
 
-/// The effect playing: its index in fxList, or -1 for none.
+/// Track `track`'s effect (0 the whole mix, 1 the emulated FM-1, 2 the real one, 3-6 the loops): its index in fxList,
+/// or -1 for none. Its instance is made here when the track has none yet (a few ms: not on the audio thread).
 #[no_mangle]
-pub extern "system" fn Java_app_fm1mix_Native_fxSelect(_e: JNIEnv, _c: JClass, index: jint) { crate::fx::select(index); }
+pub extern "system" fn Java_app_fm1mix_Native_fxSelect(_e: JNIEnv, _c: JClass, track: jint, index: jint) {
+    let _ = std::panic::catch_unwind(|| crate::fx::choose(track.max(0) as usize, index));
+}
 
 /// The finger on the pad: x, y in 0..1 (y = 0 at the bottom), down or lifted.
 #[no_mangle]
-pub extern "system" fn Java_app_fm1mix_Native_fxTouch(_e: JNIEnv, _c: JClass, x: jfloat, y: jfloat, down: jboolean) {
-    crate::fx::touch(x, y, down != 0);
+pub extern "system" fn Java_app_fm1mix_Native_fxTouch(_e: JNIEnv, _c: JClass, track: jint, x: jfloat, y: jfloat, down: jboolean) {
+    crate::fx::touch_on(track.max(0) as usize, x, y, down != 0);
 }
 
-/// What the effect is on: 0 everything, 1 the emulated FM-1, 2 the real one, 3 the loops.
 #[no_mangle]
-pub extern "system" fn Java_app_fm1mix_Native_fxTarget(_e: JNIEnv, _c: JClass, t: jint) {
-    crate::fx::TARGET.store(t.clamp(0, 3) as u32, std::sync::atomic::Ordering::Relaxed);
+pub extern "system" fn Java_app_fm1mix_Native_fxHold(_e: JNIEnv, _c: JClass, track: jint, on: jboolean) {
+    crate::fx::hold_on(track.max(0) as usize, on != 0);
 }
 
-/// HOLD: the effect stays on when the finger lifts.
+/// The audio thread's load in percent (its peak, falling slowly): the effects' cost shows here.
 #[no_mangle]
-pub extern "system" fn Java_app_fm1mix_Native_fxHold(_e: JNIEnv, _c: JClass, on: jboolean) { crate::fx::hold(on != 0); }
+pub extern "system" fn Java_app_fm1mix_Native_fxAudioLoad(_e: JNIEnv, _c: JClass) -> jfloat {
+    f32::from_bits(crate::fx::AUDIO_LOAD.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The beat now (the MIDI clock's since its Start, else the internal clock's), in full precision: the motion player.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_fxBeat(_e: JNIEnv, _c: JClass) -> jni::sys::jdouble { crate::fx::beat_now() }
 
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_fxSetBpm(_e: JNIEnv, _c: JClass, bpm: jfloat) { crate::fx::set_bpm(bpm); }
@@ -485,11 +493,6 @@ pub extern "system" fn Java_app_fm1mix_Native_loopGain(_e: JNIEnv, _c: JClass, g
     crate::loops::GAIN.store(g.clamp(0.0, 2.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The pad's TOUT takes the loops too (else only its BOUCLES).
-#[no_mangle]
-pub extern "system" fn Java_app_fm1mix_Native_fxLoopsInAll(_e: JNIEnv, _c: JClass, on: jboolean) {
-    crate::loops::IN_ALL.store(on != 0, std::sync::atomic::Ordering::Relaxed);
-}
 
 // ------------------------------------------------------------------ the passage screen (loops.rs, the source)
 
@@ -549,4 +552,37 @@ pub extern "system" fn Java_app_fm1mix_Native_loopSrcPreview(_e: JNIEnv, _c: JCl
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_loopSrcCommit(_e: JNIEnv, _c: JClass, slot: jint, a: jint, b: jint) -> jfloat {
     match crate::loops::src_commit(slot.max(0) as usize, a.max(0) as usize, b.max(0) as usize) { Ok(s) => s as jfloat, Err(_) => -1.0 }
+}
+
+/// A slot's sound (stereo 16-bit at 44.1 kHz, interleaved), or null when it is empty: a project keeps it.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopPcm(env: JNIEnv, _c: JClass, slot: jint) -> jni::sys::jshortArray {
+    let Some(b) = crate::loops::pcm(slot.max(0) as usize) else { return std::ptr::null_mut() };
+    match env.new_short_array(b.len() as i32) {
+        Ok(a) => { let _ = env.set_short_array_region(&a, 0, &b); a.into_raw() }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// A sound (16-bit, interleaved by `channels`) as a FLAC file: a project's loops, compressed without loss (flac.rs).
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_flacEncode(env: JNIEnv, _c: JClass, pcm: JShortArray, channels: jint, rate: jint) -> jbyteArray {
+    let Ok(n) = env.get_array_length(&pcm) else { return std::ptr::null_mut() };
+    let mut v = vec![0i16; n as usize];
+    if env.get_short_array_region(&pcm, 0, &mut v).is_err() { return std::ptr::null_mut() }
+    let f = crate::flac::encode(&v, channels.clamp(1, 2) as usize, rate.max(1) as u32);
+    env.byte_array_from_slice(&f).map(|a| a.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// A FLAC file back as a WAV file (16-bit), or null when it is not one we can read.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_flacToWav(env: JNIEnv, _c: JClass, flac: JByteArray) -> jbyteArray {
+    let Ok(b) = env.convert_byte_array(&flac) else { return std::ptr::null_mut() };
+    match crate::flac::decode(&b) {
+        Ok((rate, ch, pcm)) => {
+            let w = crate::flac::wav(&pcm, ch, rate);
+            env.byte_array_from_slice(&w).map(|a| a.into_raw()).unwrap_or(std::ptr::null_mut())
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
 }

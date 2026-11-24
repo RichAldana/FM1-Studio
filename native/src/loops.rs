@@ -201,8 +201,6 @@ static START_HIT: AtomicBool = AtomicBool::new(false);
 static LEARN: AtomicI32 = AtomicI32::new(-1);
 /// what the page shows, per slot: state, where it plays (0..1), length (s), its note (-1 none)
 static INFO: [[AtomicU32; 4]; SLOTS] = [const { [const { AtomicU32::new(0) }; 4] }; SLOTS];
-/// the pad's TOUT (fx.rs TARGET 0) takes the loops too (a setting; else only its BOUCLES, TARGET 3)
-pub static IN_ALL: AtomicBool = AtomicBool::new(false);
 /// the strip's volume (0..1.5, f32 bits; 0 when it is off)
 pub static GAIN: AtomicU32 = AtomicU32::new(0x3f80_0000);
 
@@ -261,6 +259,12 @@ pub fn load(i: usize, data: &[f32], channels: usize, rate: u32) -> Result<f64, S
     drop(old);
     publish_one(&lock(), i);
     Ok(frames as f64 / SR)
+}
+
+/// Slot `i`'s sound (stereo 16-bit at 44.1 kHz), for a project to keep.
+pub fn pcm(i: usize) -> Option<Arc<Vec<i16>>> {
+    if i >= SLOTS { return None; }
+    lock().slots[i].buf.clone()
 }
 
 /// Empty slot `i`.
@@ -365,20 +369,38 @@ fn boundary(b0: f64, bpf: f64, q: f64, n: usize) -> Option<usize> {
     if off < n as f64 { Some(off as usize) } else { None }
 }
 
-/// One block: `out` (stereo interleaved, the 16-bit scale) gets the slots added; `ext` is the real FM-1 as it is in
-/// this block (the level trigger), `ext_late_frames` how far behind the clock its sound is.
+/// One block, all in one: `out` (stereo interleaved, the 16-bit scale) gets the slots and the preview added, at the
+/// strip's volume (the tests, the bench; the engine uses `process_split`).
 pub fn process(out: &mut [f32], ext: &[f32], ext_late_frames: f64) {
-    let n = out.len() / 2;
-    if n == 0 { return; }
+    let n2 = out.len() & !1;
+    let mut parts = vec![0f32; PARTS * n2];
+    process_split(&mut parts, n2, ext, ext_late_frames);
+    let gain = f32::from_bits(GAIN.load(Relaxed));
+    for k in 0..n2 {
+        let mut v = 0.0;
+        for p in 0..PARTS { v += parts[p * n2 + k]; }
+        out[k] += v * gain;
+    }
+}
+
+/// The parts `process_split` writes: one per slot (each its own track's effect: fx.rs), then the passage screen's
+/// preview.
+pub const PARTS: usize = SLOTS + 1;
+
+/// One block: `parts` holds PARTS buffers of `n2` values (stereo interleaved, the 16-bit scale) each; slot i's
+/// sound goes into the i-th, the preview into the last (added: the caller clears them). `ext` is the real FM-1 as it
+/// is in this block (the level trigger), `ext_late_frames` how far behind the clock its sound is. The strip's volume
+/// (GAIN) is the caller's.
+pub fn process_split(parts: &mut [f32], n2: usize, ext: &[f32], ext_late_frames: f64) {
+    let n = n2 / 2;
+    if n == 0 || parts.len() < PARTS * n2 { return; }
     let (bpm, midi_beat, midi) = clock();
     let bpf = bpm / 60.0 / SR;
     let start_hit = START_HIT.swap(false, Relaxed);
     let mut g = lock();
-    if g.pv.on { preview(&mut g, out); }
+    if g.pv.on { preview(&mut g, &mut parts[SLOTS * n2..(SLOTS + 1) * n2]); }
     if g.slots.iter().all(|s| s.state == State::Empty) {
         g.beat += bpf * n as f64;
-        let gain = f32::from_bits(GAIN.load(Relaxed));
-        if g.pv.on && gain != 1.0 { for v in out.iter_mut() { *v *= gain; } }
         return;
     }
     let b0 = if midi { midi_beat - ext_late_frames * bpf } else { g.beat };
@@ -392,6 +414,7 @@ pub fn process(out: &mut [f32], ext: &[f32], ext_late_frames: f64) {
         let note_hit = NOTE_HIT[i].swap(false, Relaxed);
         let s = &mut g.slots[i];
         if s.buf.is_none() { continue; }
+        let out = &mut parts[i * n2..(i + 1) * n2];
         // the level trigger's quiet time
         let quiet_now = {
             let t = 32768.0 * 10f32.powf(s.s.level_db / 20.0) * 0.5;
@@ -437,11 +460,9 @@ pub fn process(out: &mut [f32], ext: &[f32], ext_late_frames: f64) {
         if let Some(o) = ends[s.s.after] {
             let s = &mut g.slots[i];
             s.begin();
-            s.render(out, o.min(n), n);
+            s.render(&mut parts[i * n2..(i + 1) * n2], o.min(n), n);
         }
     }
-    let gain = f32::from_bits(GAIN.load(Relaxed));
-    if gain != 1.0 { for v in out.iter_mut() { *v *= gain; } }
     g.beat += bpf * n as f64;
     publish(&g);
 }

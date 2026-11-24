@@ -14,7 +14,11 @@
 //!    under -90 dB for 100 ms;
 //!  - the clock: the MIDI clock coming in (LOOM-8's, through the engine's MIDI router) when there is one, else the
 //!    internal tempo, which tap tempo sets; the tempo-synced steps and the beat repeat read it;
-//!  - guards: an effect whose output is not finite is cut and cleared.
+//!  - guards: an effect whose output is not finite is cut and cleared;
+//!  - tracks (0.28): seven engines, one per track (0 the whole mix, "TOUT"; 1 the emulated FM-1; 2 the real one; 3-6
+//!    the loops), each with its own choice, finger and HOLD, and its own instances of the effects, made when the
+//!    track first picks one (`choose`, off the audio thread) and let go when it picks others (two kept: the one
+//!    playing and the one on its way out).
 //! Fixed 64-frame blocks; nothing allocated in `process`.
 
 use serde::Deserialize;
@@ -247,14 +251,16 @@ impl Map {
 
 // ------------------------------------------------------------------ the controls (UI thread -> audio)
 
-static SELECT: AtomicI32 = AtomicI32::new(-1);
-static TX: AtomicU32 = AtomicU32::new(0x3f00_0000);
-static TY: AtomicU32 = AtomicU32::new(0x3f00_0000);
-static DOWN: AtomicBool = AtomicBool::new(false);
-static TOUCHES: AtomicU32 = AtomicU32::new(0);   // counts touches down (a tap between two blocks is not lost)
-static HOLD: AtomicBool = AtomicBool::new(false);
-/// what the pad's effect is on: 0 everything, 1 the emulated FM-1, 2 the real one
-pub static TARGET: AtomicU32 = AtomicU32::new(0);
+/// the tracks: 0 the whole mix, 1 the emulated FM-1, 2 the real one, 3-6 the loops 1-4
+pub const TRACKS: usize = 7;
+static SELECT: [AtomicI32; TRACKS] = [const { AtomicI32::new(-1) }; TRACKS];
+static TX: [AtomicU32; TRACKS] = [const { AtomicU32::new(0x3f00_0000) }; TRACKS];
+static TY: [AtomicU32; TRACKS] = [const { AtomicU32::new(0x3f00_0000) }; TRACKS];
+static DOWN: [AtomicBool; TRACKS] = [const { AtomicBool::new(false) }; TRACKS];
+static TOUCHES: [AtomicU32; TRACKS] = [const { AtomicU32::new(0) }; TRACKS];   // touches down (a tap between two blocks is not lost)
+static HOLD: [AtomicBool; TRACKS] = [const { AtomicBool::new(false) }; TRACKS];
+/// the audio thread's work against the time it has, in percent (engine.rs measures it; decays slowly)
+pub static AUDIO_LOAD: AtomicU32 = AtomicU32::new(0);
 static BPM_INTERNAL: AtomicU32 = AtomicU32::new(0x42f0_0000); // 120.0
 // the MIDI clock, as the engine's router hears it
 static CLOCK_PULSES: AtomicU64 = AtomicU64::new(0);
@@ -270,14 +276,20 @@ fn now_ns() -> u64 {
 }
 fn f(a: &AtomicU32) -> f32 { f32::from_bits(a.load(Relaxed)) }
 
-pub fn select(index: i32) { SELECT.store(index, Relaxed); }
-pub fn touch(x: f32, y: f32, down: bool) {
-    TX.store(x.clamp(0.0, 1.0).to_bits(), Relaxed);
-    TY.store(y.clamp(0.0, 1.0).to_bits(), Relaxed);
-    if down && !DOWN.load(Relaxed) { TOUCHES.fetch_add(1, Relaxed); }
-    DOWN.store(down, Relaxed);
+/// Track `t`'s effect (index in the list, -1 none): its instance made first (`choose` does both for the app).
+pub fn select_on(t: usize, index: i32) { if t < TRACKS { SELECT[t].store(index, Relaxed); } }
+pub fn touch_on(t: usize, x: f32, y: f32, down: bool) {
+    if t >= TRACKS { return; }
+    TX[t].store(x.clamp(0.0, 1.0).to_bits(), Relaxed);
+    TY[t].store(y.clamp(0.0, 1.0).to_bits(), Relaxed);
+    if down && !DOWN[t].load(Relaxed) { TOUCHES[t].fetch_add(1, Relaxed); }
+    DOWN[t].store(down, Relaxed);
 }
-pub fn hold(on: bool) { HOLD.store(on, Relaxed); }
+pub fn hold_on(t: usize, on: bool) { if t < TRACKS { HOLD[t].store(on, Relaxed); } }
+// (track 0's, for the tests and the bench)
+pub fn select(index: i32) { select_on(0, index) }
+pub fn touch(x: f32, y: f32, down: bool) { touch_on(0, x, y, down) }
+pub fn hold(on: bool) { hold_on(0, on) }
 pub fn set_bpm(bpm: f32) { BPM_INTERNAL.store(bpm.clamp(30.0, 300.0).to_bits(), Relaxed); }
 /// A tap: the internal tempo from the last taps (2 s apart at most); returns the tempo now.
 pub fn tap() -> f32 {
@@ -326,6 +338,9 @@ fn transport(internal_beat: f64) -> (f64, f64, bool) {
 /// (tempo, beat position, true when it is the MIDI clock's), for the loop player (loops.rs)
 pub fn clock() -> (f64, f64, bool) { transport(*INTERNAL_BEAT.lock().unwrap()) }
 
+/// The beat position now, in full precision (the motion player: Motion.kt)
+pub fn beat_now() -> f64 { clock().1 }
+
 /// For the screen: [tempo, beat, 1 when it is the MIDI clock's]
 pub fn info() -> [f32; 3] {
     let (bpm, beat, midi) = transport(*INTERNAL_BEAT.lock().unwrap());
@@ -351,11 +366,50 @@ impl Drive {
     fn smooth_ms(&self) -> f32 { self.map.as_ref().map_or(20.0, |m| m.smooth_ms) }
 }
 
-struct Loaded {
+pub struct Loaded {
     p: Profile,
     h: *mut FxEffect,
     drives: Vec<Drive>,
     fixed: Vec<(i32, f32)>,
+}
+
+unsafe impl Send for Loaded {}
+
+impl Drop for Loaded {
+    fn drop(&mut self) { unsafe { fx_free(self.h) } }
+}
+
+/// Effect `p` made and prepared, its drives found (all its allocation: never on the audio thread), or None when this
+/// build does not have it.
+fn make_loaded(p: Profile) -> Option<Loaded> {
+    let id = CString::new(p.id.clone()).ok()?;
+    let h = unsafe { fx_new(id.as_ptr()) };
+    if h.is_null() { return None; }
+    unsafe { fx_prepare(h, SR as f64, BLOCK as c_int) };
+    let mut drives = Vec::new();
+    if p.mode == "corners" {
+        let c = &p.corners;
+        let mut names: Vec<&String> = c.bl.keys().chain(c.br.keys()).chain(c.tl.keys()).chain(c.tr.keys()).collect();
+        names.sort();
+        names.dedup();
+        for nm in names {
+            let idx = param_index(h, nm);
+            if idx == -1 { continue; }
+            let g = |m: &HashMap<String, f32>| m.get(nm).copied().unwrap_or(0.0);
+            drives.push(Drive { idx, axis: 0, map: None, corner: [g(&c.bl), g(&c.br), g(&c.tl), g(&c.tr)],
+                discrete: p.discrete.iter().any(|d| d == nm) });
+        }
+    } else {
+        for (axis, maps) in [(0, p.x.list()), (1, p.y.list())] {
+            for m in maps {
+                let idx = param_index(h, &m.param);
+                if idx == -1 { continue; }
+                drives.push(Drive { idx, axis, map: Some(m), corner: [0.0; 4], discrete: false });
+            }
+        }
+    }
+    let fixed = p.fixed.iter().map(|(k, v)| (param_index(h, k), *v)).filter(|(i, _)| *i >= 0).collect();
+    Some(Loaded { p, h, drives, fixed })
 }
 
 struct Slot {
@@ -371,7 +425,11 @@ struct Slot {
 }
 
 pub struct FxEngine {
-    fx: Vec<Loaded>,
+    /// its instances, by the list's index: made when this track first picks one (None until then)
+    fx: Vec<Option<Loaded>>,
+    /// its track (its controls), and whether it keeps the internal clock (track 0)
+    track: usize,
+    clock_owner: bool,
     active: Option<Slot>,
     tail: Option<Slot>,
     seen_touches: u32,
@@ -389,12 +447,6 @@ pub struct FxEngine {
 }
 
 unsafe impl Send for FxEngine {}
-
-impl Drop for FxEngine {
-    fn drop(&mut self) {
-        for l in &self.fx { unsafe { fx_free(l.h) } }
-    }
-}
 
 fn param_index(h: *mut FxEffect, name: &str) -> i32 {
     if name == "wet" || name == "mix" { return WET; }
@@ -434,58 +486,33 @@ fn targets(l: &Loaded, cells: &mut [i32], x: f32, y: f32, bpm: f32, out: &mut Ve
 }
 
 impl FxEngine {
-    /// Every effect of `json` (a list of profiles) this build has, made and prepared now (all the allocation).
+    /// Every effect of `json` (a list of profiles) this build has, made and prepared now (all the allocation): one
+    /// engine on track 0 with all its instances (the tests, the bench).
     pub fn load(json: &str) -> Result<FxEngine, String> {
         let profiles: Vec<Profile> = serde_json::from_str(json).map_err(|e| format!("profiles: {e}"))?;
-        let mut fx = Vec::new();
-        for p in profiles {
-            let id = CString::new(p.id.clone()).map_err(|e| e.to_string())?;
-            let h = unsafe { fx_new(id.as_ptr()) };
-            if h.is_null() { continue; } // (an effect this build does not have)
-            unsafe { fx_prepare(h, SR as f64, BLOCK as c_int) };
-            let mut drives = Vec::new();
-            if p.mode == "corners" {
-                let c = &p.corners;
-                let mut names: Vec<&String> = c.bl.keys().chain(c.br.keys()).chain(c.tl.keys()).chain(c.tr.keys()).collect();
-                names.sort();
-                names.dedup();
-                for nm in names {
-                    let idx = param_index(h, nm);
-                    if idx == -1 { continue; }
-                    let g = |m: &HashMap<String, f32>| m.get(nm).copied().unwrap_or(0.0);
-                    drives.push(Drive { idx, axis: 0, map: None, corner: [g(&c.bl), g(&c.br), g(&c.tl), g(&c.tr)],
-                        discrete: p.discrete.iter().any(|d| d == nm) });
-                }
-            } else {
-                for (axis, maps) in [(0, p.x.list()), (1, p.y.list())] {
-                    for m in maps {
-                        let idx = param_index(h, &m.param);
-                        if idx == -1 { continue; }
-                        drives.push(Drive { idx, axis, map: Some(m), corner: [0.0; 4], discrete: false });
-                    }
-                }
-            }
-            let fixed = p.fixed.iter().map(|(k, v)| (param_index(h, k), *v)).filter(|(i, _)| *i >= 0).collect();
-            fx.push(Loaded { p, h, drives, fixed });
-        }
-        Ok(FxEngine { fx, active: None, tail: None, seen_touches: TOUCHES.load(Relaxed), beat: 0.0,
+        let fx: Vec<Option<Loaded>> = profiles.into_iter().filter_map(make_loaded).map(Some).collect();
+        Ok(Self::with(fx, 0, true))
+    }
+
+    fn with(fx: Vec<Option<Loaded>>, track: usize, clock_owner: bool) -> FxEngine {
+        FxEngine { fx, track, clock_owner, active: None, tail: None, seen_touches: TOUCHES[track].load(Relaxed), beat: 0.0,
             il: [0.0; BLOCK], ir: [0.0; BLOCK], ol: [0.0; BLOCK], or: [0.0; BLOCK], tl: [0.0; BLOCK], tr: [0.0; BLOCK],
-            dl: [0.0; BLOCK], dr: [0.0; BLOCK], targets: Vec::with_capacity(32) })
+            dl: [0.0; BLOCK], dr: [0.0; BLOCK], targets: Vec::with_capacity(32) }
     }
 
     /// The effects there are (for the screen): their profiles, in order.
-    pub fn list(&self) -> Vec<&Profile> { self.fx.iter().map(|l| &l.p).collect() }
+    pub fn list(&self) -> Vec<&Profile> { self.fx.iter().flatten().map(|l| &l.p).collect() }
 
     /// A fresh slot for effect i: its parameters where the finger is (or at rest), set at once.
     fn new_slot(&mut self, i: usize) -> Slot {
         let bpm = transport(self.beat).0 as f32;
-        let l = &self.fx[i];
+        let l = self.fx[i].as_ref().expect("made before chosen");
         unsafe {
             fx_reset(l.h);
             for &(k, v) in &l.fixed { fx_set_param(l.h, k, v) }
         }
         let mut cells = vec![-1; l.drives.len()];
-        let (x, y) = match l.p.rest_at { Some([x, y]) => (x, y), None => (f(&TX), f(&TY)) };
+        let (x, y) = match l.p.rest_at { Some([x, y]) => (x, y), None => (f(&TX[self.track]), f(&TY[self.track])) };
         let mut t = std::mem::take(&mut self.targets);
         targets(l, &mut cells, x, y, bpm, &mut t);
         let vals: Vec<f32> = l.drives.iter().zip(&t).map(|(d, &v)| d.map.as_ref().and_then(|m| m.rest).unwrap_or(v)).collect();
@@ -499,6 +526,8 @@ impl FxEngine {
 
     /// The bus (interleaved stereo, i16 scale) through the pad's effect, in place.
     pub fn process(&mut self, bus: &mut [f32]) {
+        // (the tracks other than 0 follow its internal clock)
+        if !self.clock_owner { self.beat = *INTERNAL_BEAT.lock().unwrap(); }
         let n = bus.len() / 2;
         let mut i = 0;
         while i < n {
@@ -511,13 +540,14 @@ impl FxEngine {
     fn block(&mut self, bus: &mut [f32], m: usize) {
         let (bpm, beat, midi) = transport(self.beat);
         // the choice
-        let sel = SELECT.load(Relaxed);
-        let want = if sel >= 0 && (sel as usize) < self.fx.len() { Some(sel as usize) } else { None };
+        let t = self.track;
+        let sel = SELECT[t].load(Relaxed);
+        let want = if sel >= 0 && (sel as usize) < self.fx.len() && self.fx[sel as usize].is_some() { Some(sel as usize) } else { None };
         if self.active.as_ref().map(|s| s.fx) != want {
             if let Some(mut old) = self.active.take() {
                 old.leaving = true;
                 old.touching = false;
-                unsafe { fx_on_touch(self.fx[old.fx].h, 0) };
+                if let Some(l) = self.fx[old.fx].as_ref() { unsafe { fx_on_touch(l.h, 0) } }
                 self.tail = Some(old); // (an older tail goes: two at most)
             }
             if let Some(w) = want {
@@ -532,13 +562,19 @@ impl FxEngine {
                 }
             }
         }
+        // nothing on this track: the sound as it is (the clock runs on)
+        if self.active.is_none() && self.tail.is_none() {
+            self.beat += bpm / 60.0 * m as f64 / SR as f64;
+            if !midi && self.clock_owner { *INTERNAL_BEAT.lock().unwrap() = self.beat; }
+            return;
+        }
         // the finger
-        let down = DOWN.load(Relaxed);
-        let touches = TOUCHES.load(Relaxed);
+        let down = DOWN[t].load(Relaxed);
+        let touches = TOUCHES[t].load(Relaxed);
         let tapped = touches != self.seen_touches;
         self.seen_touches = touches;
-        let (tx, ty) = (f(&TX), f(&TY));
-        let hold = HOLD.load(Relaxed);
+        let (tx, ty) = (f(&TX[t]), f(&TY[t]));
+        let hold = HOLD[t].load(Relaxed);
         // the effects work at -1..1 (Faust's libraries assume it: a drive's clipping, a compressor's threshold)
         for k in 0..m {
             self.dl[k] = bus[2 * k] * (1.0 / 32768.0);
@@ -549,7 +585,7 @@ impl FxEngine {
         let mut out_l = self.dl;
         let mut out_r = self.dr;
         if let Some(s) = self.active.as_mut() {
-            let l = &self.fx[s.fx];
+            let l = self.fx[s.fx].as_ref().expect("kept while it plays");
             let p = &l.p;
             let pressed = down || tapped;
             if pressed != s.touching {
@@ -620,7 +656,7 @@ impl FxEngine {
         // the one on its way out: a send rings on with no input until quiet; an insert fades in 30 ms
         let mut drop_tail = false;
         if let Some(t) = self.tail.as_mut() {
-            let l = &self.fx[t.fx];
+            let l = self.fx[t.fx].as_ref().expect("kept while it rings");
             let send = l.p.send();
             let listen = l.p.listen;
             let fade = 1.0 / (0.03 * SR);
@@ -673,12 +709,84 @@ impl FxEngine {
         }
         // the internal clock runs on with the sound
         self.beat += bpm / 60.0 * m as f64 / SR as f64;
-        if !midi { *INTERNAL_BEAT.lock().unwrap() = self.beat; }
+        if !midi && self.clock_owner { *INTERNAL_BEAT.lock().unwrap() = self.beat; }
     }
+
+    /// The effect playing (or ringing out) on this track, by the list's index.
+    fn in_use(&self) -> [Option<usize>; 2] { [self.active.as_ref().map(|s| s.fx), self.tail.as_ref().map(|s| s.fx)] }
+}
+
+/// The effects of all the tracks: the profiles this build has, and an engine per track.
+pub struct FxBank {
+    profiles: Vec<Profile>,
+    tracks: Vec<FxEngine>,
+}
+
+impl FxBank {
+    /// The profiles of `json` this build has (each tried once, then let go: the tracks make their own).
+    pub fn load(json: &str) -> Result<FxBank, String> {
+        let all: Vec<Profile> = serde_json::from_str(json).map_err(|e| format!("profiles: {e}"))?;
+        let profiles: Vec<Profile> = all.into_iter().filter(|p| {
+            let Ok(id) = CString::new(p.id.clone()) else { return false };
+            let h = unsafe { fx_new(id.as_ptr()) };
+            if h.is_null() { return false; }
+            unsafe { fx_free(h) };
+            true
+        }).collect();
+        let n = profiles.len();
+        let tracks = (0..TRACKS).map(|t| FxEngine::with((0..n).map(|_| None).collect(), t, t == 0)).collect();
+        Ok(FxBank { profiles, tracks })
+    }
+
+    pub fn list(&self) -> Vec<&Profile> { self.profiles.iter().collect() }
+
+    /// Track `t`'s sound (interleaved stereo, i16 scale) through its effect, in place.
+    pub fn process(&mut self, t: usize, bus: &mut [f32]) {
+        if let Some(e) = self.tracks.get_mut(t) { e.process(bus); }
+    }
+
+    /// The number of tracks with an effect playing or ringing out.
+    pub fn busy(&self) -> usize { self.tracks.iter().filter(|e| e.active.is_some() || e.tail.is_some()).count() }
 }
 
 /// The engine, made once (Native.fxLoad), kept across firmwares.
-pub static ENGINE: Mutex<Option<FxEngine>> = Mutex::new(None);
+pub static ENGINE: Mutex<Option<FxBank>> = Mutex::new(None);
+
+fn bank() -> std::sync::MutexGuard<'static, Option<FxBank>> { ENGINE.lock().unwrap_or_else(|p| p.into_inner()) }
+
+/// Track `t` plays effect `index` (-1: none). Its instance is made here, off the audio thread, if the track has none
+/// yet; the track's others (not playing, not ringing out) are let go here too.
+pub fn choose(t: usize, index: i32) {
+    if t >= TRACKS { return; }
+    if index >= 0 {
+        let i = index as usize;
+        let profile = {
+            let g = bank();
+            let Some(b) = g.as_ref() else { return };
+            if i >= b.profiles.len() { return; }
+            if b.tracks[t].fx[i].is_some() { None } else { Some(b.profiles[i].clone()) }
+        };
+        if let Some(p) = profile {
+            let made = make_loaded(p);
+            let mut g = bank();
+            if let Some(b) = g.as_mut() {
+                if b.tracks[t].fx[i].is_none() { b.tracks[t].fx[i] = made; }
+            }
+        }
+    }
+    select_on(t, index);
+    // the others this track holds and no longer uses: out under the lock, freed after it
+    let old: Vec<Loaded> = {
+        let mut g = bank();
+        let Some(b) = g.as_mut() else { return };
+        let e = &mut b.tracks[t];
+        let keep = e.in_use();
+        (0..e.fx.len()).filter(|&k| Some(k) != keep[0] && Some(k) != keep[1] && k as i32 != index)
+            .filter_map(|k| e.fx[k].take()).collect()
+    };
+    drop(old);
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -828,6 +936,36 @@ mod tests {
         let late = peak(&out[2 * 22050..]);
         eprintln!("beat repeat: after the clicks stopped, still {late}");
         select(-1);
+    }
+
+    /// Two tracks on the same effect: each its own instance, its own finger; a track with nothing passes as it is.
+    #[test]
+    fn tracks_have_their_own() {
+        *ENGINE.lock().unwrap() = Some(FxBank::load(PROFILES).expect("profiles"));
+        let ids: Vec<String> = bank().as_ref().unwrap().list().iter().map(|p| p.id.clone()).collect();
+        let moog = ids.iter().position(|x| x == "faust.moog").unwrap() as i32;
+        choose(1, moog);
+        choose(3, moog);
+        touch_on(1, 0.0, 0.0, true);          // track 1: the filter closed; track 3: not touched
+        let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+        {
+            let mut g = bank();
+            let bk = g.as_mut().unwrap();
+            for _ in 0..12 {
+                a = sine(5000.0, 4410); bk.process(1, &mut a);
+                b = sine(5000.0, 4410); bk.process(3, &mut b);
+                c = sine(5000.0, 4410); bk.process(4, &mut c);
+            }
+            assert_eq!(bk.busy(), 2);
+        }
+        let dry = sine(5000.0, 4410);
+        assert!(peak(&a) < 1500.0, "track 1 not filtered: {}", peak(&a));
+        assert!(b.iter().zip(&dry).all(|(x, y)| (x - y).abs() < 1.0), "track 3 changed though untouched");
+        assert_eq!(c, dry);
+        touch_on(1, 0.0, 0.0, false);
+        choose(1, -1);
+        choose(3, -1);
+        *ENGINE.lock().unwrap() = None;
     }
 
     #[test]

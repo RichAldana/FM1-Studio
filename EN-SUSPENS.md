@@ -1,6 +1,6 @@
 # Sujets en suspens
 
-Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernière mise à jour : 0.21).
+Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernière mise à jour : 0.28).
 
 ## Effets (pad XY)
 - Fait en 0.21 : la nouvelle convention (X = quoi, Y = combien en macro, coins, cases aimantées et nommées, étiquettes,
@@ -19,11 +19,23 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
 - Options du brief non faites : la pression du doigt sur Y, l'écran de debug (latence, CPU par effet), Ableton Link.
 
 ## Lecteur de boucles (0.23)
-- Fait en 0.24 : la tranche BOUCLES fine au mixeur, l'envoi BOUCLES aux effets (et l'option « aussi dans TOUT »).
+- Fait en 0.24 : la tranche BOUCLES fine au mixeur, l'envoi BOUCLES aux effets (l'option « aussi dans TOUT » a
+  disparu en 0.28 : chaque boucle a sa piste d'effet, et TOUT prend tout le mix).
 - Fait en 0.25 : l'écran du passage (fichiers longs : quelle partie, aimant aux attaques, écoute).
+- Fait en 0.27 : les noms des boucles (option), ↻ visible, les projets (firmware + mémoire + mixeur + boucles).
+- Fait en 0.28 : les projets gardent aussi l'effet de chaque piste et les motions ; bandeau des projets ; export.
+- Projets, plus tard si besoin : le profil MIDI importé ; « Nouveau projet » (repartir de zéro) ; le point orange ne
+  voit pas les changements de la mémoire du firmware (ses patchs), seulement ceux de l'app.
 - Plus tard, si besoin : suivre le tempo (vitesse ou étirement), d'autres formats que le WAV (MP3, M4A), plusieurs
   groupes de 4, le départ sur évènement (déjà dans le moteur), les boucles dans « Deux pistes ».
 - À vérifier en jeu : le calage sur l'horloge du FM-1 (s'il faut un réglage de décalage).
+
+## Motion recording (fait en 0.28)
+- Choisi : enregistrer les gestes (pad, faders, EQ, potard et encodeurs de l'écran), un jeu de 4 patterns par piste.
+- **Pas enregistrés** : les encodeurs du vrai FM-1 en PANEL MIDI (ils vont directement à l'émulé, sans passer par
+  l'écran). À faire si besoin.
+- À vérifier en jeu : le calage sur l'horloge du FM-1, la reprise en main (doigt, fader), la longueur 8 mesures.
+- Plus tard, si besoin : le téléphone comme manette (gyroscope, accéléromètre) ; quantifier les gestes.
 
 ## Envoi d'échantillons vers LOOM-8 (découpeur) : gelé en 0.22
 - Jamais testé sur un vrai FM-1 : gelé (`SampleTargets.SEND_ENABLED = false`), l'export WAV seul. À tester un jour

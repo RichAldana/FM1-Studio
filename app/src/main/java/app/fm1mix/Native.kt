@@ -57,13 +57,18 @@ object Native {
     external fun fxLoad(profilesJson: String): String
     /** the effects there are, in order: "id\tlabel\ttype" a line each */
     external fun fxList(): String
-    /** the effect playing: its index in fxList, -1 none */
-    external fun fxSelect(index: Int)
-    /** the finger on the pad: x, y 0..1 (y = 0 at the bottom) */
-    external fun fxTouch(x: Float, y: Float, down: Boolean)
-    /** what it is on: 0 everything, 1 the emulated FM-1, 2 the real one, 3 the loops */
-    external fun fxTarget(target: Int)
-    external fun fxHold(on: Boolean)
+    /**
+     * [track]'s effect (0 the whole mix "TOUT", 1 the emulated FM-1, 2 the real one, 3-6 the loops): its index in
+     * fxList, -1 none. Its instance is made then (a few ms: not on the audio thread).
+     */
+    external fun fxSelect(track: Int, index: Int)
+    /** the finger on [track]'s pad: x, y 0..1 (y = 0 at the bottom) */
+    external fun fxTouch(track: Int, x: Float, y: Float, down: Boolean)
+    external fun fxHold(track: Int, on: Boolean)
+    /** the audio thread's load in percent (its peak, falling slowly): what the effects cost */
+    external fun fxAudioLoad(): Float
+    /** the beat now (the MIDI clock's since its Start, else the internal clock's), full precision */
+    external fun fxBeat(): Double
     external fun fxSetBpm(bpm: Float)
     /** a tap of TAP: the internal tempo from the taps */
     external fun fxTap(): Float
@@ -104,8 +109,6 @@ object Native {
     external fun loopInfo(out: FloatArray)
     /** the loops strip's volume (1 as is, 0 off) */
     external fun loopGain(g: Float)
-    /** the pad's TOUT takes the loops too (else only its BOUCLES) */
-    external fun fxLoopsInAll(on: Boolean)
 
     // the passage screen (PassageView.kt): a whole file at its own rate, its preview, the passage into a slot
     external fun loopSrcBegin(rate: Int, frames: Int)
@@ -120,4 +123,11 @@ object Native {
     external fun loopSrcPreview(a: Int, b: Int, on: Boolean)
     /** frames a..b into [slot]: its length (s), or -1 */
     external fun loopSrcCommit(slot: Int, a: Int, b: Int): Float
+    /** a slot's sound (stereo 16-bit at 44.1 kHz), null when empty: for a project */
+    external fun loopPcm(slot: Int): ShortArray?
+
+    /** A sound (16-bit, interleaved) as a FLAC file (native/src/flac.rs): the projects' sounds, compressed without loss. */
+    external fun flacEncode(pcm: ShortArray, channels: Int, rate: Int): ByteArray?
+    /** A FLAC file back as a WAV file, or null when unreadable. */
+    external fun flacToWav(flac: ByteArray): ByteArray?
 }

@@ -39,6 +39,8 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
         set(v) { field = v.coerceIn(0, 1023); invalidate() }
     /** MASTER turned on the screen (kept per firmware by the activity) */
     var onPot: ((Int) -> Unit)? = null
+    /** an encoder turned on the screen: its id and clicks (the motions record it) */
+    var onEnc: ((Int, Int) -> Unit)? = null
     /** OCT- (-1) or OCT+ (+1) pressed on the screen (the activity follows the octave) */
     var onOct: ((Int) -> Unit)? = null
     /** the keyboard's octave as the activity follows it (0: the lower C is C4) */
@@ -311,6 +313,7 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
                     t.acc -= clicks
                     encTurn[t.index] = (encTurn[t.index] + clicks * 15f) % 360f
                     Native.enc(l.encs[t.index].id, clicks)
+                    onEnc?.invoke(l.encs[t.index].id, clicks)
                     performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                     invalidate()
                 }

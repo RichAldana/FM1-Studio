@@ -492,6 +492,7 @@ impl Engine {
     /// As [`read_mixed`](Self::read_mixed), with the real FM-1 at `g_ext` in what plays and at `g_ext_rec` in what
     /// is recorded (sent to the FM-1 itself, the output leaves it out; a recording keeps it).
     pub fn read_mixed_rec(&self, out: &mut [i16], g_emu: f32, g_ext: f32, g_ext_rec: f32) {
+        let t_start = std::time::Instant::now();
         let sh = &self.shared;
         let n = out.len();
         let mut emu = vec![0i16; n];
@@ -537,41 +538,50 @@ impl Engine {
         eq[1].set(eq_db(EQ_EXT));
         eq[2].set(m_db);
         eq[3].set(m_db);
-        // the loop player (loops.rs): its slots, its EQ, at the master's level (its own volume inside)
-        let mut lp = vec![0f32; n & !1];
-        crate::loops::process(&mut lp, &xf, ext_late);
-        eq[4].set(eq_db(EQ_LOOP));
-        eq[4].process(&mut lp);
-        let gl = lr(1.0, 0.0, gm);
+        // the loop player (loops.rs): a part per slot (each its track's effect), and the passage screen's preview
+        let n2 = n & !1;
+        let mut parts = vec![0f32; crate::loops::PARTS * n2];
+        crate::loops::process_split(&mut parts, n2, &xf, ext_late);
         eq[0].process(&mut ef);
         eq[1].process(&mut xf);
-        // the pad's effect (fx.rs) on a bus: both FM-1s (0), the emulated one (1), the real one (2) or the loops (3).
-        // The real one goes through it only when it plays from the phone: played on the FM-1, its sound does not pass
-        // here (the recording keeps it dry)
-        let target = crate::fx::TARGET.load(Ordering::Relaxed);
+        // the tracks (fx.rs), each through its effect: the emulated FM-1 (1), the real one (2: only when it plays from
+        // the phone; played on the FM-1, its sound does not pass here and the recording keeps it dry), the loops
+        // (3-6); then the whole mix (0, "TOUT")
         let phone = gx == gxr;
-        let emu_in = target == 0 || target == 1;
-        let ext_in = (target == 0 || target == 2) && phone;
-        let loop_in = target == 3 || (target == 0 && crate::loops::IN_ALL.load(Ordering::Relaxed));
         let (mut pe, mut px, mut pl) = (0u32, 0u32, 0u32);
-        let mut bus = vec![0f32; n];
+        let mut eb = vec![0f32; n];
+        let mut xb = vec![0f32; n];
+        for i in 0..n {
+            eb[i] = ef[i] * ge[i & 1];
+            xb[i] = xf[i] * gx[i & 1];
+            pe = pe.max(eb[i].abs() as u32);
+            px = px.max(xb[i].abs() as u32);
+        }
+        let mut fxb = crate::fx::ENGINE.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(bank) = fxb.as_mut() {
+            bank.process(1, &mut eb);
+            if phone { bank.process(2, &mut xb); }
+            for k in 0..crate::loops::SLOTS { bank.process(3 + k, &mut parts[k * n2..(k + 1) * n2]); }
+        }
+        // the loops' strip: their sum through its EQ, at its volume and the master's
+        let mut lp = vec![0f32; n2];
+        for p in 0..crate::loops::PARTS {
+            for k in 0..n2 { lp[k] += parts[p * n2 + k]; }
+        }
+        eq[4].set(eq_db(EQ_LOOP));
+        eq[4].process(&mut lp);
+        let lg = f32::from_bits(crate::loops::GAIN.load(Ordering::Relaxed));
+        let gl = lr(lg, 0.0, gm);
         let mut mix = vec![0f32; n];
         for i in 0..n {
-            let e = ef[i] * ge[i & 1];
-            let x = xf[i] * gx[i & 1];
-            pe = pe.max(e.abs() as u32);
-            px = px.max(x.abs() as u32);
-            let l = if i < lp.len() { lp[i] * gl[i & 1] } else { 0.0 };
+            let l = if i < n2 { lp[i] * gl[i & 1] } else { 0.0 };
             pl = pl.max(l.abs() as u32);
-            bus[i] = if emu_in { e } else { 0.0 } + if ext_in { x } else { 0.0 } + if loop_in { l } else { 0.0 };
-            mix[i] = if emu_in { 0.0 } else { e } + if ext_in { 0.0 } else { x } + if loop_in { 0.0 } else { l };
+            mix[i] = eb[i] + xb[i] + l;
         }
-        if let Ok(mut g) = crate::fx::ENGINE.try_lock() {
-            if let Some(fxe) = g.as_mut() { fxe.process(&mut bus); }
-        }
+        if let Some(bank) = fxb.as_mut() { bank.process(0, &mut mix); }
+        drop(fxb);
         let mut rec = vec![0f32; n];
         for i in 0..n {
-            mix[i] += bus[i];
             // what is recorded: what plays, and the real FM-1 when it plays on the FM-1 itself (not in `mix` then)
             rec[i] = mix[i] + xf[i] * (gxr[i & 1] - gx[i & 1]);
         }
@@ -590,6 +600,11 @@ impl Engine {
         sh.peak_ext.fetch_max(px, Ordering::Relaxed);
         sh.peak_loop.fetch_max(pl, Ordering::Relaxed);
         crate::recorder::feed_mix(&emu, &ext, rec);
+        // the audio thread's load: this block's work against its length (the peak, falling 2 % a block)
+        let spent = t_start.elapsed().as_secs_f64();
+        let pct = (spent / ((n / 2).max(1) as f64 / 44100.0) * 100.0) as f32;
+        let old = f32::from_bits(crate::fx::AUDIO_LOAD.load(Ordering::Relaxed));
+        crate::fx::AUDIO_LOAD.store(pct.max(old * 0.98).to_bits(), Ordering::Relaxed);
     }
 
     pub fn lcd(&self, out: &mut [u16]) {

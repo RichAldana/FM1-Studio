@@ -7,4 +7,5 @@ pub mod state;
 pub mod fx;
 pub mod loops;
 pub mod hint;
+pub mod flac;
 mod jni_api;

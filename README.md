@@ -1,4 +1,4 @@
-# FM1 Mix (bêta, v0.25)
+# FM1 Mix (bêta, v0.28)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -17,6 +17,51 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- audio USB ---> AudioRecord ---+
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
+
+## v0.28 : motion recording, un effet par piste, bandeau des projets, export
+- **Un effet par piste** (page Effets) : une rangée de pistes en haut du pad (TOUT, ÉMU, FM-1, puis chaque boucle) ;
+  chacune garde son effet et son type. TOUT agit sur tout le mix (boucles comprises) : l'option « aussi dans TOUT »
+  disparaît. FM-1 ne prend un effet que si son son passe par le téléphone.
+- **Trois effets à la fois au plus** : un quatrième est refusé avec un message. **Garde-fou du processeur** : si le
+  son prend plus de 85 % du temps (ou le téléphone 98 %) pendant 2 s, le dernier effet ajouté s'éteint, avec un
+  message, même longtemps après l'avoir ajouté.
+- **Motion recording** (gestes enregistrés, calés sur l'horloge ; 1 mesure = 16 pas) :
+  - sous le pad, une bande MOTION : REC, la longueur (1, 2, 4 ou 8 mesures), les patterns A B C D, HOLD ;
+  - une page MOTION (zone du milieu) : toutes les pistes, leurs quatre patterns (geste dessiné en petit), REC, STOP ;
+  - un jeu de 4 patterns par piste ; REC arme, l'enregistrement part à la mesure suivante et rejoue tout de suite ;
+    un appui sur un pattern le lance à la mesure suivante ; appui long : jouer, écraser, ajouter par-dessus,
+    longueur, copier, effacer ;
+  - enregistre le pad, les faders et les EQ du mixeur, le potard et les encodeurs de l'écran ; un doigt ou un fader
+    touché reprend la main pendant la lecture ;
+  - gardé entre deux lancements (et dans les projets).
+- **Bandeau du haut en deux pages** : glisser vers la gauche (ou toucher les points dessous). Page 1 : le bandeau
+  habituel. Page 2 : le **nom du projet** (le toucher pour le renommer ; point orange = des changements depuis le
+  dernier enregistrement), **Enreg.** (par-dessus le fichier du projet ; la première fois, demande le nom),
+  **Ouvrir**, **Exporter**.
+- **Exporter** : Complet ou Léger (sans les sons : les boucles reviennent vides avec leurs noms et réglages),
+  `.fm1mix` ou `.zip` (s'ouvre partout ; l'app le rouvre aussi), sons compressés sans perte en **FLAC** (environ
+  moitié moins lourd), taille estimée et avertissement au-delà de 20 Mo pour un mail ; « Enregistrer sous… » (où on
+  veut : dossier, carte SD, Drive) ou « Envoyer… » (mail, WhatsApp, Signal…).
+- Projets version 2 : ils gardent aussi l'effet de chaque piste et les motions ; les projets 0.27 s'ouvrent toujours.
+- Encodeur FLAC maison (`native/src/flac.rs`), lecture par la bibliothèque claxon (Apache-2.0, voir `NOTICE.md`).
+
+## v0.27 : projets, noms des boucles, mode boucle visible
+- **Projets** (Réglages > Projet) : « Enregistrer le projet… » écrit un fichier `.fm1mix` dans Documents/Fm1mix projects
+  avec le firmware (son id, et son paquet s'il a été importé), sa mémoire (ce qu'il a sauvé lui-même), ses réglages
+  dans l'app (horloge, MIDI, profil, volume, EQ, octave…), le mixeur (FM-1 branché, master, boucles) et les quatre
+  boucles avec leurs réglages, leurs noms et leurs sons (le passage joué, en WAV : le projet se suffit à lui-même).
+  « Ouvrir un projet… » liste ceux de ce dossier (et « Autre fichier… ») ; à l'ouverture, la mémoire actuelle du
+  firmware est gardée en copie dans l'app. Format : un zip (`project.json`, `firmware.fm1s`, `firmware.fwsc`,
+  `loop1.wav`…), voir `Project.kt`.
+- **Nom des boucles** (option) : dans les réglages d'une boucle, « Nom sur le bouton » (10 caractères) ; vide, le
+  bouton garde son numéro.
+- **Mode boucle visible** : sur chaque piste, ↻ (en boucle) et 1× (une fois) côte à côte après → ← ↔ ; de même dans
+  les réglages (« En boucle ↻ » / « Une seule fois 1× »).
+
+## v0.26 : les boucles cherchent dans Musique/FM1 Mix
+- Charger un son dans une boucle ouvre la liste des sons de l'app, dans Musique/FM1 Mix : les enregistrements, puis les
+  découpes du découpeur (avec leur dossier), les plus récents d'abord, avec leur durée (plus de 30 s : choix du
+  passage). « Autre fichier WAV… » ouvre le sélecteur d'Android directement dans ce dossier.
 
 ## v0.25 : choisir le passage d'un fichier long (écran « Passage 1 »)
 - **L'écran du passage** (`PassageView.kt`) : tout le fichier en haut avec la fenêtre du passage à glisser ; le passage

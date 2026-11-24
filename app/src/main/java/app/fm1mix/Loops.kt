@@ -31,6 +31,8 @@ class LoopBank(private val ctx: Context) {
         var stop = 1           // 0 at once, 1 at the clock's next step, 2 at the end of the pass
         var volPct = 100
         var wave = FloatArray(0)
+        /** the name on its button (an option: empty, its number) */
+        var label = ""
         /** the passage of the file it plays (s), and the file's length */
         var from = 0f
         var to = 0f
@@ -63,6 +65,7 @@ class LoopBank(private val ctx: Context) {
             s.stop = prefs.getInt(k("stop"), 1)
             s.volPct = prefs.getInt(k("vol"), 100)
             s.wave = prefs.getString(k("wave"), "")!!.split(',').mapNotNull { it.toFloatOrNull() }.toFloatArray()
+            s.label = prefs.getString(k("label"), "") ?: ""
             s.from = prefs.getFloat(k("from"), 0f)
             s.to = prefs.getFloat(k("to"), 0f)
             s.fileSec = prefs.getFloat(k("file"), 0f)
@@ -85,7 +88,7 @@ class LoopBank(private val ctx: Context) {
             .putString(k("uri"), s.uri).putString(k("name"), s.name).putFloat(k("sec"), s.seconds)
             .putInt(k("dir"), s.dir).putBoolean(k("once"), s.once).putInt(k("trig"), s.trig).putInt(k("quant"), s.quant)
             .putInt(k("note"), s.note).putInt(k("after"), s.after).putInt(k("lvl"), s.levelDb).putInt(k("stop"), s.stop)
-            .putFloat(k("from"), s.from).putFloat(k("to"), s.to).putFloat(k("file"), s.fileSec)
+            .putString(k("label"), s.label).putFloat(k("from"), s.from).putFloat(k("to"), s.to).putFloat(k("file"), s.fileSec)
             .putInt(k("vol"), s.volPct).putString(k("wave"), s.wave.joinToString(",") { "%.3f".format(java.util.Locale.ROOT, it) })
             .apply()
     }
@@ -162,6 +165,29 @@ class LoopBank(private val ctx: Context) {
                     done("")
                 } else { onChange?.invoke(); done(tr("Boucle ${i + 1} : passage refusé", "Loop ${i + 1}: passage refused")) }
             }
+        }
+    }
+
+    /** Slot [i] as a project keeps it (Project.kt): its settings, name and where its sound came from. */
+    fun toJson(i: Int): org.json.JSONObject {
+        val s = slots[i]
+        return org.json.JSONObject().put("name", s.name).put("label", s.label).put("seconds", s.seconds.toDouble())
+            .put("dir", s.dir).put("once", s.once).put("quant", s.quant).put("stop", s.stop).put("vol", s.volPct)
+            .put("from", s.from.toDouble()).put("to", s.to.toDouble()).put("fileSec", s.fileSec.toDouble())
+    }
+
+    /** A project's slot [i]: its settings now, its sound from [file] (the passage it kept), or empty. */
+    fun fromJson(i: Int, o: org.json.JSONObject?, file: java.io.File?) {
+        val s = slots[i]
+        if (o == null || o.optBoolean("empty")) { clear(i); s.label = o?.optString("label", "") ?: ""; save(i); return }
+        s.dir = o.optInt("dir", 0); s.once = o.optBoolean("once", false); s.quant = o.optInt("quant", 4)
+        s.stop = o.optInt("stop", 1); s.volPct = o.optInt("vol", 100); s.label = o.optString("label", "")
+        // (a light project: the settings and the name, no sound)
+        if (file == null) { clear(i); apply(i); save(i); return }
+        apply(i)
+        val name = o.optString("name", "")
+        load(i, Uri.fromFile(file), quiet = true) { _ ->
+            if (name.isNotEmpty()) { s.name = name; save(i); onChange?.invoke() }
         }
     }
 

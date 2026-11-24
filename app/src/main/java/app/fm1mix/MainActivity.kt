@@ -30,7 +30,7 @@ import java.security.MessageDigest
  * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
 /** shown in About and in error reports; keep in step with versionName (app/build.gradle.kts) */
-const val APP_VERSION = "0.25"
+const val APP_VERSION = "0.28"
 
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView
@@ -44,6 +44,24 @@ class MainActivity : ComponentActivity() {
     /** the loop player (Loops.kt, native/src/loops.rs): its page in the middle zone */
     private val loopBank by lazy { LoopBank(this) }
     private lateinit var loopsView: LoopsView
+    /** the motions (Motion.kt): their page in the middle zone */
+    private lateinit var motionView: MotionView
+    private val motionFile get() = File(filesDir, "motion.json")
+    private var motionSaveQueued = false
+    private lateinit var namePill: NamePill
+    /** the project open (Project.kt): its name, its file, what it was when saved (fingerprint()) */
+    private var projName = ""
+    private var projUri: android.net.Uri? = null
+    /** until then, what the project is becomes what it was saved as (its loops are still loading) */
+    private var projSettleUntil = 0L
+    /** bumped by the motions on every change: their part of the fingerprint is worked out again only then */
+    @Volatile private var motionRev = 0
+    private var motionFpRev = -1
+    private var motionFp = 0
+    /** what "Exporter" writes: the project at the moment its sheet opened */
+    private var exportSnap: Project.Snapshot? = null
+    /** the watch over the phone's load: since when it has been too much (0: it is not) */
+    private var overSince = 0L
     private var pickSlot = 0
     private val m4 = FloatArray(5)        // the peaks: emulated, real, what plays, what is recorded, the loops
     private val statPeak = FloatArray(2)
@@ -128,10 +146,55 @@ class MainActivity : ComponentActivity() {
             selectFirmware("file:$name")
         }
     }
-    private val pickLoop = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@registerForActivityResult
-        val i = pickSlot
-        // longer than 30 s: the passage screen first; else in as it is
+    /** the system's file picker, opened in [folder] (Music/FM1 Mix for the loops, Documents/Fm1mix projects) */
+    private class OpenInFolder(private val folder: android.net.Uri) : androidx.activity.result.contract.ActivityResultContract<Array<String>, android.net.Uri?>() {
+        override fun createIntent(context: android.content.Context, input: Array<String>) =
+            android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(android.content.Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                putExtra(android.content.Intent.EXTRA_MIME_TYPES, input)
+                putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, folder)
+            }
+        override fun parseResult(resultCode: Int, intent: android.content.Intent?): android.net.Uri? =
+            if (resultCode == android.app.Activity.RESULT_OK) intent?.data else null
+    }
+    private val pickLoop = registerForActivityResult(OpenInFolder(android.provider.DocumentsContract.buildDocumentUri(
+        "com.android.externalstorage.documents", "primary:" + android.os.Environment.DIRECTORY_MUSIC + "/" + Recorder.FOLDER))) { uri ->
+        if (uri != null) pickedLoop(pickSlot, uri)
+    }
+    private val pickProject = registerForActivityResult(OpenInFolder(Project.folderUri())) { uri ->
+        if (uri != null) openProject(uri)
+    }
+    /** "Enregistrer sous…": the system's picker, to create the file where one wants (input: the file's name) */
+    private class CreateIn(private val folder: android.net.Uri) : androidx.activity.result.contract.ActivityResultContract<String, android.net.Uri?>() {
+        override fun createIntent(context: android.content.Context, input: String) =
+            android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(android.content.Intent.CATEGORY_OPENABLE)
+                type = if (input.endsWith(".zip")) "application/zip" else "application/octet-stream"
+                putExtra(android.content.Intent.EXTRA_TITLE, input)
+                putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, folder)
+            }
+        override fun parseResult(resultCode: Int, intent: android.content.Intent?): android.net.Uri? =
+            if (resultCode == android.app.Activity.RESULT_OK) intent?.data else null
+    }
+    private val exportTo = registerForActivityResult(CreateIn(Project.folderUri())) { uri ->
+        val s = exportSnap
+        if (uri != null && s != null) {
+            val light = prefs.getBoolean("ex.light", false)
+            val flac = prefs.getBoolean("ex.flac", true)
+            Toast.makeText(this, tr("Export…", "Exporting…"), Toast.LENGTH_SHORT).show()
+            saver.execute {
+                val msg = runCatching {
+                    contentResolver.openOutputStream(uri, "wt")!!.use { Project.write(it, s, light, flac) }
+                    tr("Projet exporté : ", "Project exported: ") + (Project.shownName(this, uri) ?: s.name)
+                }.getOrElse { tr("Export raté : ", "Export failed: ") + (it.message ?: it.toString()) }
+                ui.post { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    /** a sound chosen for slot [i]: longer than 30 s, the passage screen first; else in as it is */
+    private fun pickedLoop(i: Int, uri: android.net.Uri) {
         loopBank.probe(uri) { sec, err ->
             when {
                 sec == null -> Toast.makeText(this, tr("Boucle ${i + 1} : ", "Loop ${i + 1}: ") + err, Toast.LENGTH_LONG).show()
@@ -167,15 +230,7 @@ class MainActivity : ComponentActivity() {
         if (firmware.startsWith("asset:")) firmware = "cat:chordism"      // (0.9 and before: Chordism built in)
         loadFirmwarePrefs()
         newChip = prefs.getBoolean("newChip", false)
-        gExtPct = prefs.getInt("gExt", 100)
-        balExtPct = prefs.getInt("balExt", 0)
-        masterPct = prefs.getInt("master", 100)
-        muted[1] = prefs.getBoolean("muteExt", false)
-        muted[2] = prefs.getBoolean("muteMaster", false)
-        muted[3] = prefs.getBoolean("muteLoop", false)
-        loopPct = prefs.getInt("gLoop", 100)
-        Native.fxLoopsInAll(prefs.getBoolean("fxLoopsInAll", false))
-        for (i in 3 until 9) eqDb[i] = prefs.getInt("eq$i", 0)
+        loadMixPrefs()
         outTarget = prefs.getInt("out", AudioIo.OUT_FM1)
         lowLatency = prefs.getBoolean("lowLatency", false)
         offsetMs = prefs.getInt("offsetMs", 0)
@@ -185,9 +240,10 @@ class MainActivity : ComponentActivity() {
         recorder.rate = prefs.getInt("recRate", 44100)
         recorder.channels = prefs.getInt("recCh", 2)
 
+        loadProjectPrefs()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF3A3C41.toInt()) }
-        root.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply {
-            setMargins(dp(10), dp(8), dp(10), 0)
+        root.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56) + dp(9)).apply {
+            setMargins(dp(10), dp(6), dp(10), 0)
         })
         status = TextView(this).apply {
             textSize = 11f; setTextColor(DIM); maxLines = 2; setPadding(dp(18), dp(4), dp(18), 0)
@@ -196,7 +252,8 @@ class MainActivity : ComponentActivity() {
         root.addView(status)
         panel = PanelView(this, PanelView.PART_TOP)
         panel.potValue = fwInt("pot", 1023)
-        panel.onPot = { fwPut("pot", it) }
+        panel.onPot = { fwPut("pot", it); Motion.input("pot", it.toFloat()) }
+        panel.onEnc = { id, clicks -> Motion.input("enc$id", clicks.toFloat()) }
         keysPanel = PanelView(this, PanelView.PART_KEYS)
         panel.onOct = { moveOctave(it) }
         keysPanel.noteNames = noteNames()
@@ -206,20 +263,22 @@ class MainActivity : ComponentActivity() {
             onSlice = { openSlicer(recorder.lastKept.firstOrNull()) }
         }
         mixView = MixerView(this).apply {
-            onVol = { s, v -> setVolume(s, v) }
-            onEq = { s, b, db -> eqDb[3 * s + b] = db; putEq(3 * s + b, db); applyMix() }
+            onVol = { s, v -> setVolume(s, v); Motion.input("vol$s", v.toFloat()) }
+            onEq = { s, b, db -> eqDb[3 * s + b] = db; putEq(3 * s + b, db); applyMix(); Motion.input("eq${3 * s + b}", db.toFloat()) }
             onMute = { s, off -> setMuted(s, off) }
         }
         loadEffects()
         loopsView = LoopsView(this, loopBank).apply {
-            onPick = { i -> pickSlot = i; pickLoop.launch(arrayOf("audio/wav", "audio/x-wav", "audio/wave", "audio/*")) }
+            onPick = { i -> chooseLoopFile(i) }
             onSettings = { i -> loopSettings(i) }
             onPassage = { i -> loopBank.slots[i].uri?.let { openPassage(i, android.net.Uri.parse(it)) } }
         }
         loopBank.onChange = { loopsView.invalidate() }
         loopBank.restore()
-        val mid = SwipeZone(this, listOf(panel, recView, FxPadView(this), loopsView),
-            listOf("FM-1", tr("Enregistreur", "Recorder"), tr("Effets", "Effects"), tr("Boucles", "Loops")),
+        motionView = MotionView(this).apply { onPatternMenu = { t, k -> patternMenu(t, k) } }
+        startMotion()
+        val mid = SwipeZone(this, listOf(panel, recView, FxPadView(this), motionView, loopsView),
+            listOf("FM-1", tr("Enregistreur", "Recorder"), tr("Effets", "Effects"), "Motion", tr("Boucles", "Loops")),
             prefs.getInt("pageMid", 0)) { prefs.edit().putInt("pageMid", it).apply() }
         val bottom = SwipeZone(this, listOf(keysPanel, mixView), listOf(tr("Clavier", "Keyboard"), tr("Mixeur et EQ", "Mixer and EQ")),
             prefs.getInt("pageBottom", 0).coerceIn(0, 1)) { prefs.edit().putInt("pageBottom", it).apply() }
@@ -234,6 +293,7 @@ class MainActivity : ComponentActivity() {
             insets
         }
         setContentView(root)
+        ui.postDelayed({ watchProject() }, 1500)
         lastCrash()?.let { showCrash(it) }
     }
 
@@ -299,7 +359,32 @@ class MainActivity : ComponentActivity() {
      * FM-1 (the phone or the FM-1's panel), where the sound goes (the phone or the FM-1), the MIDI lamp, the load, the
      * settings. Sized to fit the screen's width: everything shrinks together on a narrow phone.
      */
-    private fun topBar(): View {
+    private fun topBar(): View = BarPager(this, listOf(machineBar(), projectBar()), prefs.getInt("pageTop", 0)) {
+        prefs.edit().putInt("pageTop", it).apply()
+        if (it == 1) watchProject()
+    }
+
+    /** The bar's second page: the project's name (a tap: rename it; the amber dot: changed since saved), and save,
+     *  open, export. */
+    private fun projectBar(): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = pill(0xFF1E1F22.toInt(), 0, dp(18))
+            setPadding(dp(8), 0, dp(8), 0)
+        }
+        namePill = NamePill(this).apply { name = projShown(); setOnClickListener { renameProject() } }
+        bar.addView(namePill, LinearLayout.LayoutParams(0, dp(38), 1f))
+        fun btn(kind: Int, label: String, accent: Boolean, f: () -> Unit) =
+            bar.addView(LabelButton(this, kind, label, accent).apply { setOnClickListener { f() } },
+                LinearLayout.LayoutParams(dp(54), dp(46)).apply { leftMargin = dp(6) })
+        btn(BarIcons.SAVE, tr("Enreg.", "Save"), false) { saveProjectNow() }
+        btn(BarIcons.OPEN, tr("Ouvrir", "Open"), false) { openProjects() }
+        btn(BarIcons.EXPORT, tr("Exporter", "Export"), true) { exportProject() }
+        return bar
+    }
+
+    private fun machineBar(): View {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -493,7 +578,7 @@ class MainActivity : ComponentActivity() {
                 Native.setLatency(lowLatency, offsetMs)
                 Native.setLimiter(limiter)
                 applyMix()
-                FxState.send()
+                FxState.sendAll()
                 Native.pot(panel.potValue)
                 applyMidiMode()
                 val micOk = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -534,7 +619,7 @@ class MainActivity : ComponentActivity() {
         if (running) {
             panel.releaseAll()
             keysPanel.releaseAll()
-            Native.fxTouch(0.5f, 0.5f, false)
+            for (t in 0 until FxState.TRACKS) Native.fxTouch(t, 0.5f, 0.5f, false)
             running = false
             audio.stop()
             Native.stop()?.let { f -> flashFile?.let { writeState(it, f) } }
@@ -598,6 +683,18 @@ class MainActivity : ComponentActivity() {
         for (i in 0 until 3) eqDb[i] = fwInt("eq$i", 0)
         if (::panel.isInitialized) panel.potValue = fwInt("pot", 1023)
         beforePanel = null
+    }
+
+    /** the mixer's settings that are the app's (not the firmware's): the real FM-1, the master, the loops */
+    private fun loadMixPrefs() {
+        gExtPct = prefs.getInt("gExt", 100)
+        balExtPct = prefs.getInt("balExt", 0)
+        masterPct = prefs.getInt("master", 100)
+        muted[1] = prefs.getBoolean("muteExt", false)
+        muted[2] = prefs.getBoolean("muteMaster", false)
+        muted[3] = prefs.getBoolean("muteLoop", false)
+        loopPct = prefs.getInt("gLoop", 100)
+        for (i in 3 until 9) eqDb[i] = prefs.getInt("eq$i", 0)
     }
 
     /** the firmware's own saved state (state.rs), one file per firmware */
@@ -664,6 +761,7 @@ class MainActivity : ComponentActivity() {
             lastMidiCount = mi[0]
             midiLamp.active = active
             if (n % 30 == 0) saveStateIfChanged()
+            if (n % 10 == 0) watchLoad()
             if (n++ % 15 == 0) {
                 val load = Native.load()
                 if (load == -2) {
@@ -692,6 +790,109 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ------------------------------------------------------------------ the motions (Motion.kt)
+
+    /** the player, its host (the mixer, the panel), and the motions kept from last time */
+    private fun startMotion() {
+        Motion.start(object : Motion.Host {
+            override fun beat() = Native.fxBeat()
+            override fun apply(id: String, v: Float) { ui.post { liveControl(id, v) } }
+            override fun encoder(e: Int, clicks: Int) { if (running) Native.enc(e, clicks) }
+            override fun changed() { motionRev++; ui.post { motionView.invalidate(); FxState.views.forEach { it.invalidate() }; queueMotionSave() } }
+        })
+        runCatching { Motion.fromJson(org.json.JSONObject(motionFile.readText())) }
+    }
+
+    private fun queueMotionSave() {
+        if (motionSaveQueued) return
+        motionSaveQueued = true
+        ui.postDelayed({
+            motionSaveQueued = false
+            val json = Motion.toJson().toString()
+            saver.execute { runCatching { val tmp = File(filesDir, "motion.json.tmp"); tmp.writeText(json); tmp.renameTo(motionFile) } }
+        }, 1000)
+    }
+
+    /** a pattern's move on the mixer or the panel: applied as the hand would, not kept in the settings */
+    private fun liveControl(id: String, v: Float) {
+        val iv = Math.round(v)
+        when {
+            id == "vol0" -> { gEmuPct = iv.coerceIn(0, 150); applyGains(); syncMixer() }
+            id == "vol1" -> { gExtPct = iv.coerceIn(0, 150); applyGains(); syncMixer() }
+            id == "vol2" -> { masterPct = iv.coerceIn(0, 150); applyMix() }
+            id == "vol3" -> { loopPct = iv.coerceIn(0, 150); applyGains(); syncMixer() }
+            id.startsWith("eq") -> id.removePrefix("eq").toIntOrNull()?.takeIf { it in 0 until 9 }?.let { eqDb[it] = iv.coerceIn(-12, 12); applyMix() }
+            id == "pot" -> if (running) { panel.potValue = iv.coerceIn(0, 1023); Native.pot(panel.potValue); panel.invalidate() }
+        }
+    }
+
+    /**
+     * Three effects at most play; when the phone cannot keep up anyway (the audio thread over 85 % of its time, or
+     * the emulation over 98 %, for two seconds), the effect added last is cut, and said so.
+     */
+    private fun watchLoad() {
+        if (FxState.active() == 0) { overSince = 0; return }
+        val audioLoad = Native.fxAudioLoad()
+        val emuLoad = Native.load()
+        val now = System.currentTimeMillis()
+        if (audioLoad > 85f || emuLoad >= 98) {
+            if (overSince == 0L) overSince = now
+            if (now - overSince > 2000) {
+                val t = FxState.lastAdded()
+                if (t >= 0) {
+                    val name = FxState.catalog?.let { c -> c.all.getOrNull(FxState.selected[t])?.let { c.shown(it.label) } } ?: ""
+                    FxState.pick(t, -1)
+                    Toast.makeText(this, tr("Processeur saturé : $name coupé sur ${FxState.name(t)}", "CPU overloaded: $name turned off on ${FxState.name(t)}"), Toast.LENGTH_LONG).show()
+                }
+                overSince = 0
+            }
+        } else overSince = 0
+    }
+
+    /** A pattern's menu: play or stop, write over it, add over it, its length, copy it, erase it. */
+    private fun patternMenu(t: Int, k: Int) {
+        val sh = Sheet(this).onClose { sheet = null }
+        sheet = sh
+        val name = "ABCD"[k]
+        sh.show("${FxState.name(t)} · " + tr("pattern $name", "pattern $name")) {
+            val pat = Motion.tracks[t].pats[k]
+            val st = Motion.state(t, k)
+            if (!pat.isEmpty()) {
+                group()
+                if (st == Motion.PLAYING) action(tr("■ Arrêter", "■ Stop"), tr("à la prochaine mesure", "on the next bar")) { Motion.stop(t); sh.close() }
+                else action(tr("▶ Jouer", "▶ Play"), tr("à la prochaine mesure", "on the next bar")) { Motion.tapPattern(t, k); sh.close() }
+            }
+            group(tr("Enregistrer", "Record"))
+            action(tr("● Écraser (réenregistrer)", "● Write over it (record again)"), tr("à partir de la prochaine mesure", "from the next bar")) {
+                Motion.recordInto(t, k, overdub = false); sh.close()
+            }
+            if (!pat.isEmpty()) action(tr("◐ Ajouter par-dessus", "◐ Add over it"),
+                tr("seul ce que tu bouges pendant le passage est remplacé", "only what you move during the pass is replaced")) {
+                Motion.recordInto(t, k, overdub = true); sh.close()
+            }
+            group(tr("Longueur", "Length"))
+            for (b in Motion.BARS) choice(tr("$b mesure${if (b > 1) "s" else ""} (${b * 16} pas)", "$b bar${if (b > 1) "s" else ""} (${b * 16} steps)"),
+                null, pat.bars == b) { Motion.setLength(t, k, b); sh.refresh() }
+            if (!pat.isEmpty()) {
+                group(tr("Copier vers…", "Copy to…"))
+                for (tt in 0 until Motion.TRACKS) nav(FxState.name(tt), null, null) {
+                    sh.push(tr("Copier vers ${FxState.name(tt)}", "Copy to ${FxState.name(tt)}")) {
+                        group()
+                        for (kk in 0 until Motion.PATTERNS) action(tr("Pattern ${"ABCD"[kk]}", "Pattern ${"ABCD"[kk]}"),
+                            if (Motion.tracks[tt].pats[kk].isEmpty()) tr("vide", "empty") else tr("remplacé", "replaced")) {
+                            Motion.copy(t, k, tt, kk); sh.close()
+                        }
+                    }
+                }
+            }
+            group()
+            toggle(tr("Le doigt reprend la main", "The finger takes over"),
+                tr("Pendant la lecture, un doigt sur le pad ou un fader bougé l'emporte ; lâché, le pattern reprend", "While it plays, a finger on the pad or a fader moved wins; let go, the pattern goes on"),
+                Motion.takeOver) { Motion.takeOver = it; queueMotionSave() }
+            if (!pat.isEmpty()) action(tr("Effacer le pattern $name", "Erase pattern $name"), danger = true) { Motion.erase(t, k); sh.close() }
+        }
+    }
+
     // ------------------------------------------------------------------ the loops
 
     /** a slot's settings: its file, when it starts (on the clock), how it stops, its volume */
@@ -703,17 +904,20 @@ class MainActivity : ComponentActivity() {
             group(tr("Fichier", "File"))
             nav(if (s.name.isEmpty()) tr("Choisir un WAV", "Choose a WAV") else s.name,
                 if (s.seconds > 0f) "%.1f s".format(s.seconds) else null,
-                tr("Toucher pour en prendre un autre (30 s au plus)", "Tap to take another (30 s at most)")) {
-                sh.close(); pickSlot = i; pickLoop.launch(arrayOf("audio/wav", "audio/x-wav", "audio/wave", "audio/*"))
+                tr("Toucher pour en prendre un autre (plus de 30 s : choix du passage)", "Tap to take another (over 30 s: choose the passage)")) {
+                sh.close(); chooseLoopFile(i)
             }
             if (s.uri != null) nav(tr("Passage", "Passage"), "%.1f → %.1f s".format(s.from, s.to),
                 if (s.fileSec > 0f) tr("dans un fichier de %.0f s", "in a file of %.0f s").format(s.fileSec) else null) {
                 sh.close(); openPassage(i, android.net.Uri.parse(s.uri))
             }
+            nav(tr("Nom sur le bouton", "Name on the button"), s.label.ifEmpty { "${i + 1}" },
+                tr("Au choix : sans nom, le bouton garde son numéro", "Optional: without one, the button keeps its number")) { renameLoop(i) { sh.refresh() } }
             group(tr("Lecture", "Playback"))
             for ((d, name) in listOf(0 to tr("En avant →", "Forward →"), 1 to tr("À l'envers ←", "Backward ←"), 2 to tr("Aller-retour ↔ (ping-pong)", "Back and forth ↔ (ping-pong)")))
                 choice(name, null, s.dir == d) { s.dir = d; loopBank.apply(i); sh.refresh() }
-            toggle(tr("Une seule fois (1×)", "Once (1×)"), tr("Sinon elle tourne jusqu'à l'arrêt", "Otherwise it goes round until stopped"), s.once) { s.once = it; loopBank.apply(i) }
+            choice(tr("En boucle ↻", "Looped ↻"), tr("Elle repart au début jusqu'à l'arrêt", "It goes round until stopped"), !s.once) { s.once = false; loopBank.apply(i); sh.refresh() }
+            choice(tr("Une seule fois 1×", "Once 1×"), tr("Elle joue son passage une fois, puis s'arrête", "It plays its passage once, then stops"), s.once) { s.once = true; loopBank.apply(i); sh.refresh() }
             group(tr("Départ, calé sur l'horloge", "Start, on the clock"))
             for (q in LoopBank.QUANTS) choice(tr("Au prochain ", "On the next ") + LoopBank.quantName(q), null, s.quant == q) { s.quant = q; loopBank.apply(i); sh.refresh() }
             group(tr("Arrêt", "Stop"))
@@ -730,6 +934,74 @@ class MainActivity : ComponentActivity() {
                 tr("pas choisi, calée sur le son du FM-1 tel qu'on l'entend. Sans horloge MIDI et sans rien qui joue, la première ",
                     "step chosen, lined up with the FM-1's sound as heard. With no MIDI clock and nothing playing, the first ") +
                 tr("boucle part tout de suite et pose la mesure.", "loop starts at once and sets the bar."))
+        }
+    }
+
+    /** The name on slot [i]'s button (empty: its number again), then [done]. */
+    private fun renameLoop(i: Int, done: () -> Unit) {
+        val s = loopBank.slots[i]
+        val field = EditText(this).apply {
+            setText(s.label); setSelectAllOnFocus(true); isSingleLine = true
+            filters = arrayOf(android.text.InputFilter.LengthFilter(10))
+            hint = tr("ex. BASSE, PAD, BREAK", "e.g. BASS, PAD, BREAK")
+        }
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(field) }
+        AlertDialog.Builder(this)
+            .setTitle(tr("Nom de la boucle ${i + 1}", "Name of loop ${i + 1}"))
+            .setMessage(tr("10 caractères au plus. Vide : le bouton garde son numéro.", "10 characters at most. Empty: the button keeps its number."))
+            .setView(box)
+            .setPositiveButton("OK") { _, _ -> s.label = field.text.toString().trim(); loopBank.apply(i); done() }
+            .setNeutralButton(tr("Numéro", "Number")) { _, _ -> s.label = ""; loopBank.apply(i); done() }
+            .setNegativeButton(tr("Annuler", "Cancel"), null)
+            .show()
+        field.requestFocus()
+    }
+
+    /**
+     * A sound for slot [i]: the app's own, in Music/FM1 Mix (its recordings, then the slicer's cuts, newest first), or
+     * any WAV through the system's picker (opened in that folder).
+     */
+    private fun chooseLoopFile(i: Int) {
+        class Found(val name: String, val uri: android.net.Uri, val folder: String, val ms: Long)
+        val recs = ArrayList<Found>()
+        val cuts = ArrayList<Found>()
+        val coll = android.provider.MediaStore.Audio.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val root = android.os.Environment.DIRECTORY_MUSIC + "/" + Recorder.FOLDER
+        runCatching {
+            contentResolver.query(coll, arrayOf(android.provider.MediaStore.Audio.Media._ID, android.provider.MediaStore.Audio.Media.DISPLAY_NAME,
+                    android.provider.MediaStore.Audio.Media.RELATIVE_PATH, android.provider.MediaStore.Audio.Media.DURATION),
+                "${android.provider.MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?", arrayOf("$root%"),
+                "${android.provider.MediaStore.Audio.Media.DATE_ADDED} DESC")?.use { c ->
+                while (c.moveToNext() && recs.size + cuts.size < 300) {
+                    val n = c.getString(1) ?: continue
+                    if (!n.lowercase().endsWith(".wav")) continue
+                    val rel = (c.getString(2) ?: "").trimEnd('/')
+                    val f = Found(n.removeSuffix(".wav").removeSuffix(".WAV"), android.content.ContentUris.withAppendedId(coll, c.getLong(0)),
+                        rel.removePrefix(root).trim('/'), c.getLong(3))
+                    if (f.folder.isEmpty()) recs += f else cuts += f
+                }
+            }
+        }
+        fun dur(ms: Long) = if (ms <= 0) null else if (ms < 60_000) "%.1f s".format(ms / 1000.0) else "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
+        fun hint(ms: Long) = if (ms > 30_050) tr("plus de 30 s : choix du passage", "over 30 s: choose the passage") else null
+        val sh = Sheet(this).onClose { sheet = null }
+        sheet = sh
+        sh.show(tr("Boucle ${i + 1} · un son", "Loop ${i + 1} · a sound")) {
+            if (recs.isEmpty() && cuts.isEmpty())
+                note(tr("Rien encore dans Musique/FM1 Mix : enregistre ou découpe d'abord, ou prends un autre fichier.",
+                    "Nothing in Music/FM1 Mix yet: record or slice first, or take another file."))
+            if (recs.isNotEmpty()) {
+                group(tr("Enregistrements", "Recordings"))
+                for (f in recs) nav(f.name, dur(f.ms), hint(f.ms)) { sh.close(); pickedLoop(i, f.uri) }
+            }
+            if (cuts.isNotEmpty()) {
+                group(tr("Découpes", "Slices"))
+                for (f in cuts) nav(f.name, dur(f.ms), f.folder.removePrefix("Découpes").trim('/').ifEmpty { null }) { sh.close(); pickedLoop(i, f.uri) }
+            }
+            group()
+            nav(tr("Autre fichier WAV…", "Another WAV file…"), null, tr("Ouvre Musique/FM1 Mix, et tout le reste", "Opens Music/FM1 Mix, and everything else")) {
+                sh.close(); pickSlot = i; pickLoop.launch(arrayOf("audio/wav", "audio/x-wav", "audio/wave", "audio/*"))
+            }
         }
     }
 
@@ -788,6 +1060,366 @@ class MainActivity : ComponentActivity() {
                 }
             }.onFailure { e -> v.error = e.message ?: e.toString() }
         }
+    }
+
+    // ------------------------------------------------------------------ projects (Project.kt)
+
+    /** the mixer's own settings a project keeps (the firmware's are its "name@firmware" ones) */
+    private val mixKeys = listOf("gExt", "balExt", "master", "muteExt", "muteMaster", "muteLoop", "gLoop",
+        "eq3", "eq4", "eq5", "eq6", "eq7", "eq8")
+
+    private fun prefJson(key: String, v: Any?): org.json.JSONObject? = when (v) {
+        is Int -> org.json.JSONObject().put("k", key).put("t", "i").put("v", v)
+        is Boolean -> org.json.JSONObject().put("k", key).put("t", "b").put("v", v)
+        is String -> org.json.JSONObject().put("k", key).put("t", "s").put("v", v)
+        is Float -> org.json.JSONObject().put("k", key).put("t", "f").put("v", v.toDouble())
+        is Long -> org.json.JSONObject().put("k", key).put("t", "l").put("v", v)
+        else -> null
+    }
+
+    private fun putPref(e: android.content.SharedPreferences.Editor, key: String, o: org.json.JSONObject) {
+        when (o.optString("t")) {
+            "i" -> e.putInt(key, o.optInt("v")); "b" -> e.putBoolean(key, o.optBoolean("v"))
+            "s" -> e.putString(key, o.optString("v")); "f" -> e.putFloat(key, o.optDouble("v").toFloat())
+            "l" -> e.putLong(key, o.optLong("v"))
+        }
+    }
+
+    // the project open: its name and file (kept), whether it changed since saved (the bar's amber dot)
+
+    private fun loadProjectPrefs() {
+        projName = prefs.getString("proj.name", "") ?: ""
+        projUri = prefs.getString("proj.uri", null)?.let { android.net.Uri.parse(it) }
+    }
+
+    private fun projShown() = projName.ifEmpty { tr("Sans titre", "Untitled") }
+
+    /** what the project is now, in one number: the firmware and its settings, the mixer, the effects, the loops, the
+     *  motions (not what plays), the name. Not the firmware's own memory (its patches): the app does not see it change. */
+    private fun fingerprint(): Int {
+        val sb = StringBuilder(projName).append('|').append(firmware).append('|')
+        for ((k, v) in prefs.all.toSortedMap()) {
+            if ((firmware.isNotEmpty() && k.endsWith("@$firmware")) || k in mixKeys || (k.startsWith("fx.") && k != "fx.track"))
+                sb.append(k).append('=').append(v).append(';')
+        }
+        for (i in 0 until 4) sb.append(loopBank.slots[i].uri).append(loopBank.toJson(i))
+        if (motionFpRev != motionRev) {
+            motionFpRev = motionRev
+            val m = Motion.toJson()
+            m.optJSONArray("tracks")?.let { a -> for (i in 0 until a.length()) a.optJSONObject(i)?.let { it.remove("playing"); it.remove("target") } }
+            motionFp = m.toString().hashCode()
+        }
+        return sb.append(motionFp).toString().hashCode()
+    }
+
+    /** the project as saved is the project now */
+    private fun projectSaved(name: String, uri: android.net.Uri?, fp: Int) {
+        projName = name; projUri = uri
+        prefs.edit().putString("proj.name", name).putString("proj.uri", uri?.toString()).putInt("proj.fp", fp).apply()
+        if (::namePill.isInitialized) { namePill.name = projShown(); namePill.dirty = false }
+    }
+
+    /** the bar's name and dot, once a second (while the bar shows them) */
+    private val projWatch = object : Runnable {
+        override fun run() {
+            ui.removeCallbacks(this)
+            if (!::namePill.isInitialized || isFinishing) return
+            val fp = fingerprint()
+            val settling = System.currentTimeMillis() < projSettleUntil
+            if (settling) prefs.edit().putInt("proj.fp", fp).apply()
+            namePill.name = projShown()
+            // (never saved: nothing to tell apart from)
+            namePill.dirty = prefs.contains("proj.fp") && prefs.getInt("proj.fp", 0) != fp
+            if (settling || prefs.getInt("pageTop", 0) == 1) ui.postDelayed(this, 1000)
+        }
+    }
+    private fun watchProject() = projWatch.run()
+
+    private fun renameProject() {
+        val field = EditText(this).apply { setText(projName); hint = tr("Sans titre", "Untitled"); setSelectAllOnFocus(true); isSingleLine = true }
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(field) }
+        AlertDialog.Builder(this)
+            .setTitle(tr("Nom du projet", "Project name"))
+            .setView(box)
+            .setPositiveButton("OK") { _, _ ->
+                val n = field.text.toString().trim()
+                if (n.isEmpty() || n == projName) return@setPositiveButton
+                projName = n
+                prefs.edit().putString("proj.name", n).apply()
+                namePill.name = projShown()
+                // its file follows (one of ours); else the next save makes a new one with that name
+                val u = projUri
+                if (u != null) saver.execute {
+                    val ok = Project.rename(this, u, n)
+                    ui.post { if (!ok) { projUri = null; prefs.edit().remove("proj.uri").apply() }; watchProject() }
+                } else watchProject()
+            }
+            .setNegativeButton(tr("Annuler", "Cancel"), null)
+            .show()
+        field.requestFocus()
+    }
+
+    /** Enregistrer: over the project's file; the first time, its name asked first */
+    private fun saveProjectNow() {
+        if (firmware.isEmpty()) { Toast.makeText(this, tr("Choisis d'abord un firmware", "Pick a firmware first"), Toast.LENGTH_SHORT).show(); return }
+        if (projUri != null && projName.isNotEmpty()) saveProject(projName, projUri) else saveProjectDialog()
+    }
+
+    private fun saveProjectDialog() {
+        if (firmware.isEmpty()) { Toast.makeText(this, tr("Choisis d'abord un firmware", "Pick a firmware first"), Toast.LENGTH_SHORT).show(); return }
+        val def = projName.ifEmpty { tr("Projet ", "Project ") + java.text.SimpleDateFormat("yyyy-MM-dd HH-mm", java.util.Locale.ROOT).format(java.util.Date()) }
+        val field = EditText(this).apply { setText(def); setSelectAllOnFocus(true); isSingleLine = true }
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(field) }
+        AlertDialog.Builder(this)
+            .setTitle(tr("Nom du projet", "Project name"))
+            .setMessage(tr("Dans Documents/${Project.FOLDER} : ${firmwareLabel(firmware)}, sa mémoire et ses réglages, le mixeur, les effets, les motions, les boucles et leurs sons.",
+                "In Documents/${Project.FOLDER}: ${firmwareLabel(firmware)}, its memory and settings, the mixer, the effects, the motions, the loops and their sounds."))
+            .setView(box)
+            .setPositiveButton(tr("Enregistrer", "Save")) { _, _ -> saveProject(field.text.toString().trim().ifEmpty { def }, null) }
+            .setNegativeButton(tr("Annuler", "Cancel"), null)
+            .show()
+        field.requestFocus()
+    }
+
+    /** The project now ([Project.Snapshot]): what the screen knows here, the rest (the firmware's memory, the sounds)
+     *  off the screen's thread; [then] gets it there, with the fingerprint it had. */
+    private fun snapshot(name: String, then: (Result<Pair<Project.Snapshot, Int>>) -> Unit) {
+        val fw = firmware
+        val fp = fingerprint()
+        val json = org.json.JSONObject()
+            .put("format", Project.FORMAT).put("version", Project.VERSION).put("app", APP_VERSION).put("name", name)
+            .put("saved", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.ROOT).format(java.util.Date()))
+        val fwPrefs = org.json.JSONArray()
+        for ((k, v) in prefs.all) if (k.endsWith("@$fw")) prefJson(k.removeSuffix("@$fw"), v)?.let { fwPrefs.put(it) }
+        json.put("firmware", org.json.JSONObject().put("id", fw).put("label", firmwareLabel(fw)).put("prefs", fwPrefs))
+        val mix = org.json.JSONArray()
+        for (k in mixKeys) if (prefs.contains(k)) prefJson(k, prefs.all[k])?.let { mix.put(it) }
+        json.put("mix", mix)
+        // each track's effect (FxPadView.kt), the motions (Motion.kt)
+        val fx = org.json.JSONArray()
+        for ((k, v) in prefs.all) if (k.startsWith("fx.")) prefJson(k, v)?.let { fx.put(it) }
+        json.put("fx", fx)
+        json.put("motion", Motion.toJson())
+        val loops = org.json.JSONArray()
+        for (i in 0 until 4) loops.put(if (loopBank.slots[i].uri != null) loopBank.toJson(i) else org.json.JSONObject().put("label", loopBank.slots[i].label).put("empty", true))
+        json.put("loops", loops)
+        saver.execute {
+            then(runCatching {
+                if (running) Native.savedIfChanged()?.let { writeState(stateFile(fw), it) }
+                val state = stateFile(fw).takeIf { it.exists() }?.readBytes()
+                val pkg = if (fw.startsWith("file:")) firmwareBytes(fw) else null
+                val pcm = HashMap<Int, ShortArray>()
+                for (i in 0 until 4) if (loopBank.slots[i].uri != null) Native.loopPcm(i)?.let { pcm[i] = it }
+                Project.Snapshot(name, json, state, pkg, pcm) to fp
+            })
+        }
+    }
+
+    /** Save as [name]: over [over] (the project's file) when given and still there, else a new file. */
+    private fun saveProject(name: String, over: android.net.Uri?) {
+        Toast.makeText(this, tr("Enregistrement du projet…", "Saving the project…"), Toast.LENGTH_SHORT).show()
+        snapshot(name) { r ->
+            val res = r.mapCatching { (snap, fp) -> Triple(Project.save(this, snap, over), fp, snap) }
+            ui.post {
+                res.onSuccess { (saved, fp, _) ->
+                    projectSaved(name, saved.first, fp)
+                    Toast.makeText(this, tr("Projet enregistré : ", "Project saved: ") + saved.second, Toast.LENGTH_LONG).show()
+                }
+                res.onFailure { Toast.makeText(this, tr("Projet non enregistré : ", "Project not saved: ") + (it.message ?: it.toString()), Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun openProjects() {
+        val sh = Sheet(this).onClose { sheet = null }
+        sheet = sh
+        sh.show(tr("Ouvrir un projet", "Open a project")) { projectsPage(sh) }
+    }
+
+    private fun mb(bytes: Long) = String.format(java.util.Locale.getDefault(), "%.1f %s", bytes / 1048576.0, tr("Mo", "MB"))
+
+    /** Exporter: the project now, to put where one wants or to send (mail, messaging...), complete or light, as
+     *  .fm1mix or .zip, its sounds compressed or not. */
+    private fun exportProject() {
+        if (firmware.isEmpty()) { Toast.makeText(this, tr("Choisis d'abord un firmware", "Pick a firmware first"), Toast.LENGTH_SHORT).show(); return }
+        val name = projShown()
+        snapshot(name) { r ->
+            ui.post {
+                r.onFailure { Toast.makeText(this, tr("Export impossible : ", "Cannot export: ") + (it.message ?: it.toString()), Toast.LENGTH_LONG).show() }
+                r.onSuccess { (snap, _) -> exportSnap = snap; exportSheet(snap) }
+            }
+        }
+    }
+
+    private fun exportSheet(snap: Project.Snapshot) {
+        val sh = Sheet(this).onClose { sheet = null }
+        sheet = sh
+        val nLoops = snap.loops.size
+        sh.show(tr("Exporter « ${snap.name} »", "Export \"${snap.name}\"")) {
+            val light = prefs.getBoolean("ex.light", false)
+            val zip = prefs.getBoolean("ex.zip", false)
+            val flac = prefs.getBoolean("ex.flac", true)
+            note(firmwareLabel(firmware) + " · " + tr("$nLoops boucle" + (if (nLoops > 1) "s" else ""), "$nLoops loop" + (if (nLoops > 1) "s" else "")))
+            group(tr("Contenu", "Content"))
+            choice(tr("Complet", "Complete") + " · " + mb(snap.size(false, flac)),
+                tr("Firmware, sa mémoire, réglages, mixeur, effets, motions, boucles et leurs sons",
+                    "Firmware, its memory, settings, mixer, effects, motions, loops and their sounds"), !light) {
+                prefs.edit().putBoolean("ex.light", false).apply() }
+            choice(tr("Léger", "Light") + " · " + mb(snap.size(true, flac)),
+                tr("Tout sauf les sons : les boucles reviennent vides, avec leurs noms et réglages",
+                    "All but the sounds: the loops come back empty, with their names and settings"), light) {
+                prefs.edit().putBoolean("ex.light", true).apply() }
+            group(tr("Format et compression", "Format and compression"))
+            choice(".fm1mix", tr("Le format de FM1 Mix", "FM1 Mix's format"), !zip) { prefs.edit().putBoolean("ex.zip", false).apply() }
+            choice(".zip", tr("S'ouvre sur n'importe quel ordinateur ; FM1 Mix le rouvre aussi", "Opens on any computer; FM1 Mix opens it too"), zip) {
+                prefs.edit().putBoolean("ex.zip", true).apply() }
+            toggle(tr("Sons compressés sans perte (FLAC)", "Sounds compressed without loss (FLAC)"),
+                if (light) tr("Sans effet en Léger : pas de sons", "No effect when light: no sounds")
+                else tr("Environ moitié moins lourd : ", "About half the size: ") + mb(snap.size(false, true)), flac) {
+                prefs.edit().putBoolean("ex.flac", it).apply(); sh.refresh() }
+            val size = snap.size(light, flac)
+            if (size > Project.MAIL_MB * 1048576L)
+                note(tr("≈ ${mb(size)} : par mail, la limite est souvent de 20 à 25 Mo. Au-delà, choisis « Léger », les sons compressés, ou passe par Drive.",
+                    "≈ ${mb(size)}: by mail the limit is often 20 to 25 MB. Beyond that, pick \"Light\", compressed sounds, or go through Drive."))
+            else note(tr("≈ ${mb(size)} (estimation)", "≈ ${mb(size)} (estimate)"))
+            group()
+            action(tr("Enregistrer sous…", "Save as…"), tr("Un dossier, une carte SD, Drive", "A folder, an SD card, Drive")) {
+                sh.close(); exportTo.launch(Project.clean(snap.name) + if (zip) ".zip" else Project.EXT)
+            }
+            action(tr("Envoyer…", "Send…"), tr("Mail, WhatsApp, Signal, Messages…", "Mail, WhatsApp, Signal, Messages…")) {
+                sh.close(); shareProject(snap, light, zip, flac)
+            }
+            note(tr("Le destinataire l'ouvre avec FM1 Mix (bandeau du haut, page 2 › Ouvrir › Autre fichier). Un firmware du catalogue se retélécharge ; un firmware importé voyage dans le projet.",
+                "The recipient opens it with FM1 Mix (top bar, page 2 › Open › Another file). A catalogue firmware is downloaded again; an imported one travels in the project."))
+        }
+    }
+
+    /** Envoyer: the project written in the app's cache, handed to the app chosen (read-only, through the FileProvider). */
+    private fun shareProject(snap: Project.Snapshot, light: Boolean, zip: Boolean, flac: Boolean) {
+        Toast.makeText(this, tr("Préparation…", "Preparing…"), Toast.LENGTH_SHORT).show()
+        saver.execute {
+            val r = runCatching {
+                val dir = File(cacheDir, "export").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+                val f = File(dir, Project.clean(snap.name) + if (zip) ".zip" else Project.EXT)
+                f.outputStream().use { Project.write(it, snap, light, flac) }
+                f
+            }
+            ui.post {
+                r.onFailure { Toast.makeText(this, tr("Envoi impossible : ", "Cannot send: ") + (it.message ?: it.toString()), Toast.LENGTH_LONG).show() }
+                r.onSuccess { f ->
+                    val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.export", f)
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = if (zip) "application/zip" else "application/octet-stream"
+                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                        putExtra(android.content.Intent.EXTRA_SUBJECT, "FM1 Mix · " + snap.name)
+                        putExtra(android.content.Intent.EXTRA_TEXT, tr("Projet FM1 Mix « ${snap.name} » (${mb(f.length())}). À ouvrir avec FM1 Mix.",
+                            "FM1 Mix project \"${snap.name}\" (${mb(f.length())}). To open with FM1 Mix."))
+                        clipData = android.content.ClipData.newRawUri("", uri)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    runCatching { startActivity(android.content.Intent.createChooser(send, tr("Envoyer le projet", "Send the project"))) }
+                        .onFailure { Toast.makeText(this, tr("Aucune application pour l'envoyer", "No app to send it"), Toast.LENGTH_LONG).show() }
+                }
+            }
+        }
+    }
+
+    /** the projects in Documents/Fm1mix projects, and any other file */
+    private fun Sheet.Page.projectsPage(sh: Sheet) {
+        val list = Project.list(this@MainActivity)
+        val fmt = java.text.SimpleDateFormat("d MMM yyyy, HH:mm", java.util.Locale.getDefault())
+        if (list.isEmpty()) note(tr("Aucun projet dans Documents/${Project.FOLDER} pour l'instant.", "No project in Documents/${Project.FOLDER} yet."))
+        else {
+            group(tr("Dans Documents/${Project.FOLDER}", "In Documents/${Project.FOLDER}"))
+            for ((n, uri, t) in list) nav(n, null, fmt.format(java.util.Date(t))) { sh.close(); openProject(uri) }
+        }
+        group()
+        nav(tr("Autre fichier…", "Another file…"), null, tr("Un projet venu d'ailleurs (.fm1mix)", "A project from elsewhere (.fm1mix)")) {
+            sh.close(); pickProject.launch(arrayOf("application/octet-stream", "application/zip", "*/*"))
+        }
+    }
+
+    /** A project file: read (off the screen's thread), then, once agreed, the firmware, its memory, the mixer and the loops. */
+    private fun openProject(uri: android.net.Uri) {
+        val dir = File(filesDir, "loops")
+        val tag = "proj-" + System.currentTimeMillis()
+        saver.execute {
+            val r = runCatching { contentResolver.openInputStream(uri)!!.use { Project.read(it, dir, tag) } }
+            ui.post {
+                r.onFailure { Toast.makeText(this, tr("Projet illisible : ", "Unreadable project: ") + (it.message ?: it.toString()), Toast.LENGTH_LONG).show() }
+                r.onSuccess { p ->
+                    val fw = p.json.optJSONObject("firmware")
+                    val label = fw?.optString("label").orEmpty().ifEmpty { fw?.optString("id").orEmpty() }
+                    val pname = p.json.optString("name")
+                    val light = p.json.optBoolean("light")
+                    AlertDialog.Builder(this)
+                        .setTitle(tr("Ouvrir « $pname » ?", "Open \"$pname\"?"))
+                        .setMessage(tr("$label repart avec la mémoire et les réglages du projet, ainsi que le mixeur, les effets, les motions et les quatre boucles. " +
+                            "La mémoire actuelle de ce firmware est gardée en copie dans l'app.",
+                            "$label starts again with the project's memory and settings, as do the mixer, the effects, the motions and the four loops. " +
+                            "This firmware's current memory is kept as a copy in the app.") +
+                            (if (light) tr("\n\nProjet léger : les boucles reviennent sans leurs sons (noms et réglages gardés).",
+                                "\n\nLight project: the loops come back without their sounds (names and settings kept).") else "") +
+                            (if (projDirty()) tr("\n\nLe projet en cours a des changements non enregistrés.", "\n\nThe current project has unsaved changes.") else ""))
+                        .setPositiveButton(tr("Ouvrir", "Open")) { _, _ -> applyProject(p, tag, uri) }
+                        .setNegativeButton(tr("Annuler", "Cancel")) { _, _ -> p.loops.values.forEach { it.delete() } }
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun projDirty() = prefs.contains("proj.fp") && prefs.getInt("proj.fp", 0) != fingerprint()
+
+    private fun applyProject(p: Project.Read, tag: String, uri: android.net.Uri) {
+        val fwo = p.json.optJSONObject("firmware") ?: return
+        val fw = fwo.optString("id")
+        if (fw.isEmpty()) return
+        powerOff()
+        // the firmware's package, when it was imported and is not on this phone
+        if (fw.startsWith("file:") && p.pkg != null) {
+            val f = File(File(filesDir, "firmware").apply { mkdirs() }, fw.removePrefix("file:"))
+            if (!f.exists()) runCatching { f.writeBytes(p.pkg) }
+        }
+        // its memory: the project's (the one there kept aside first)
+        val st = stateFile(fw)
+        if (st.exists()) runCatching { st.copyTo(File(st.parentFile, st.name + ".avant-projet"), overwrite = true) }
+        if (p.state != null) writeState(st, p.state) else st.delete()
+        val e = prefs.edit()
+        fwo.optJSONArray("prefs")?.let { a -> for (k in 0 until a.length()) a.optJSONObject(k)?.let { o -> putPref(e, o.optString("k") + "@" + fw, o) } }
+        p.json.optJSONArray("mix")?.let { a -> for (k in 0 until a.length()) a.optJSONObject(k)?.let { o -> putPref(e, o.optString("k"), o) } }
+        // each track's effect (since version 2; an older project leaves them as they are)
+        p.json.optJSONArray("fx")?.let { a ->
+            for (k in prefs.all.keys) if (k.startsWith("fx.")) e.remove(k)
+            for (k in 0 until a.length()) a.optJSONObject(k)?.let { o -> putPref(e, o.optString("k"), o) }
+        }
+        e.putString("firmware", fw).putBoolean("power", true).apply()
+        firmware = fw
+        loadFirmwarePrefs()
+        loadMixPrefs()
+        applyGains()
+        applyMix()
+        syncMixer()
+        // the loops
+        val loops = p.json.optJSONArray("loops")
+        for (i in 0 until 4) {
+            val o = loops?.optJSONObject(i)
+            val empty = o == null || o.optBoolean("empty")
+            loopBank.fromJson(i, o, if (empty) null else p.loops[i])
+        }
+        // (the sounds of earlier projects no slot plays any more)
+        File(filesDir, "loops").listFiles()?.forEach { f ->
+            if (f.name.startsWith("proj-") && !f.name.startsWith(tag) && loopBank.slots.none { it.uri == android.net.Uri.fromFile(f).toString() }) f.delete()
+        }
+        if (p.json.has("fx")) { loadEffects(); FxState.views.forEach { it.invalidate() } }
+        if (p.json.has("motion")) Motion.fromJson(p.json.optJSONObject("motion"))
+        status.text = firmwareName()
+        powerOn()
+        // the project open is this one; what it is settles once its loops are loaded
+        projectSaved(p.json.optString("name"), uri, fingerprint())
+        projSettleUntil = System.currentTimeMillis() + 4000
+        ui.postDelayed({ watchProject() }, 500)
+        Toast.makeText(this, tr("Projet ouvert : ", "Project open: ") + p.json.optString("name"), Toast.LENGTH_LONG).show()
     }
 
     // ------------------------------------------------------------------ recording
@@ -1168,6 +1800,14 @@ class MainActivity : ComponentActivity() {
         sh.show(tr("Réglages", "Settings")) {
             group("Firmware")
             nav("Firmware", firmwareLabel(firmware).lowercase().replaceFirstChar { it.uppercase() }) { sh.push("Firmwares") { catalogPage(sh) } }
+            group(tr("Projet", "Project"))
+            nav(tr("Enregistrer", "Save"), projShown(),
+                tr("Le firmware et sa mémoire, ses réglages, le mixeur, les effets, les motions et les boucles",
+                    "The firmware and its memory, its settings, the mixer, the effects, the motions and the loops")) { sh.close(); saveProjectNow() }
+            nav(tr("Enregistrer sous un autre nom…", "Save under another name…")) { sh.close(); saveProjectDialog() }
+            nav(tr("Ouvrir un projet…", "Open a project…")) { sh.push(tr("Ouvrir un projet", "Open a project")) { projectsPage(sh) } }
+            nav(tr("Exporter…", "Export…"), null, tr("Enregistrer ailleurs ou envoyer (mail, messagerie)", "Save elsewhere or send (mail, messaging)")) { sh.close(); exportProject() }
+            note(tr("Aussi dans le bandeau du haut : glisse-le vers la gauche.", "Also in the top bar: swipe it to the left."))
             group(tr("Son", "Sound"))
             nav(tr("Sortie", "Output"), outName()) { sh.push(tr("Sortie du son", "Sound output")) { outputPage() } }
             nav(tr("Mixeur et EQ", "Mixer and EQ"), mixSummary()) { sh.push(tr("Mixeur et EQ", "Mixer and EQ")) { mixerPage() } }
@@ -1253,9 +1893,6 @@ class MainActivity : ComponentActivity() {
         nav("EQ", eqSummary(1)) { sheet?.push(tr("EQ · FM-1 branché", "EQ · plugged FM-1")) { eqPage(1) } }
         group(tr("Boucles", "Loops"))
         slider("Volume", loopPct, 0, 150, { "$it %" }) { loopPct = it; applyGains(); prefs.edit().putInt("gLoop", it).apply(); syncMixer() }
-        toggle(tr("Aussi dans TOUT (effets)", "In ALL too (effects)"),
-            tr("Sinon le pad ne les prend qu'avec BOUCLES", "Otherwise the pad takes them only with LOOPS"),
-            prefs.getBoolean("fxLoopsInAll", false)) { prefs.edit().putBoolean("fxLoopsInAll", it).apply(); Native.fxLoopsInAll(it) }
         group(tr("Sortie", "Output"))
         slider("Master", masterPct, 0, 150, { "$it %" }) { masterPct = it; prefs.edit().putInt("master", it).apply(); applyMix() }
         nav("EQ master", eqSummary(2)) { sheet?.push("EQ · master") { eqPage(2) } }
@@ -1291,14 +1928,13 @@ class MainActivity : ComponentActivity() {
         showSwitches()
     }
 
-    /** played on the FM-1, the real FM-1 does not go through the phone: the pad cannot take it (its send FM-1 off) */
+    /** played on the FM-1, the real FM-1 does not go through the phone: its track's effect cannot take it then */
     private fun fxOutput() {
         FxState.fm1Out = outTarget == AudioIo.OUT_FM1
-        if (FxState.fm1Out && FxState.target == 2) FxState.target = 0
-        FxState.send()
+        FxState.sendAll()
     }
 
-    /** The pad's effects (native/src/fx.rs, assets/fx_profiles.json), made once; the last choices back. */
+    /** The pad's effects (native/src/fx.rs, assets/fx_profiles.json), loaded once; each track's last choice back. */
     private fun loadEffects() {
         if (FxState.catalog == null) {
             val json = runCatching { assets.open("fx_profiles.json").use { it.readBytes().toString(Charsets.UTF_8) } }.getOrDefault("[]")
@@ -1307,15 +1943,34 @@ class MainActivity : ComponentActivity() {
             FxState.catalog = FxCatalog(json, Native.fxList())
         }
         val cat = FxState.catalog ?: return
-        val sel = cat.all.firstOrNull { it.id == prefs.getString("fxId", "") }
-        FxState.selected = sel?.index ?: -1
-        FxState.type = sel?.type ?: prefs.getString("fxType", null) ?: cat.types.firstOrNull() ?: ""
-        FxState.target = prefs.getInt("fxTarget", 0)
-        FxState.hold = false
-        FxState.onChange = {
-            prefs.edit().putString("fxId", cat.all.getOrNull(FxState.selected)?.id ?: "")
-                .putString("fxType", FxState.type).putInt("fxTarget", FxState.target).apply()
+        // (before 0.28: one effect, sent to TOUT, ÉMU, FM-1 or the loops: it becomes that track's)
+        if (!prefs.contains("fx.track") && prefs.contains("fxId")) {
+            val t = when (prefs.getInt("fxTarget", 0)) { 1 -> 1; 2 -> 2; 3 -> 3; else -> 0 }
+            prefs.edit().putString("fx.$t.id", prefs.getString("fxId", "")).putString("fx.$t.type", prefs.getString("fxType", ""))
+                .putInt("fx.track", t).remove("fxId").remove("fxType").remove("fxTarget").remove("fxLoopsInAll").apply()
         }
+        var n = 0
+        for (t in 0 until FxState.TRACKS) {
+            val sel = cat.all.firstOrNull { it.id == prefs.getString("fx.$t.id", "") }
+            FxState.selected[t] = if (sel != null && n < FxState.MAX_ACTIVE) { n++; sel.index } else -1
+            FxState.type[t] = sel?.type ?: prefs.getString("fx.$t.type", null) ?: cat.types.firstOrNull() ?: ""
+            FxState.hold[t] = false
+            FxState.addedAt[t] = prefs.getLong("fx.$t.at", 0L)
+        }
+        FxState.track = prefs.getInt("fx.track", 1).coerceIn(0, FxState.TRACKS - 1)
+        FxState.loopLabel = { i -> loopBank.slots.getOrNull(i)?.label?.takeIf { it.isNotEmpty() } ?: "B${i + 1}" }
+        FxState.onChange = {
+            val e = prefs.edit().putInt("fx.track", FxState.track)
+            for (t in 0 until FxState.TRACKS) {
+                e.putString("fx.$t.id", cat.all.getOrNull(FxState.selected[t])?.id ?: "").putString("fx.$t.type", FxState.type[t])
+                    .putLong("fx.$t.at", FxState.addedAt[t])
+            }
+            e.apply()
+            motionView.invalidate()
+        }
+        FxState.onRefused = { msg -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+        FxState.onPad = { t, x, y, down -> Motion.pad(t, x, y, down) }
+        FxState.onPatternMenu = { t, k -> patternMenu(t, k) }
         fxOutput()
     }
 
@@ -1409,6 +2064,7 @@ class MainActivity : ComponentActivity() {
         info(tr("Boucle granulaire, Texture, Résonateur modal, Modulation croisée", "Granular loop, Texture, Modal resonator, Cross modulation"),
             tr("MIT · Emilie Gillet (Mutable Instruments : Clouds, Rings, Warps ; stmlib)", "MIT · Emilie Gillet (Mutable Instruments: Clouds, Rings, Warps; stmlib)"))
         info("SIMD Everywhere, {fmt}", "MIT")
+        info(tr("Lecture des sons FLAC des projets", "Reading the projects' FLAC sounds"), "Apache-2.0 · Ruud van Asseldonk (claxon)")
         nav(tr("Code de fm1-emu", "fm1-emu's code")) { open("https://github.com/joakimeriksson/fm1-emu") }
         nav("SLOOP") { open("https://github.com/isod89/sloop-fm1") }
         nav("The Firmware Hub") { open(FirmwareCatalog.HUB) }
@@ -1417,6 +2073,7 @@ class MainActivity : ComponentActivity() {
         nav("Airwindows") { open("https://github.com/airwindows/airwindows") }
         nav("Surge Synth Team") { open("https://github.com/surge-synthesizer") }
         nav("eurorack (Emilie Gillet)") { open("https://github.com/pichenettes/eurorack") }
+        nav("claxon") { open("https://github.com/ruuda/claxon") }
         note(tr("Chaque firmware reste sous la licence de son auteur (sa page dans le catalogue).", "Each firmware stays under its author's licence (its page in the catalogue)."))
     }
 

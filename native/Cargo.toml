@@ -16,6 +16,7 @@ jni = "0.21"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+claxon = "0.4"
 
 # the pad's effects (native/fx: C++, Faust's generated code among it)
 [build-dependencies]

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What "Envoyer…" (Exporter, the projects) hands to another app: the project just written for it, nothing else -->
+<paths>
+    <cache-path name="export" path="export/" />
+</paths>
