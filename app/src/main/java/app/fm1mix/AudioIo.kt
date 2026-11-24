@@ -32,8 +32,18 @@ class AudioIo(private val ctx: Context) {
     private var outThread: Thread? = null
     private var inThread: Thread? = null
     private val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    /** The FM-1 read straight from USB, when Android offers no USB input (UsbAudioIn). */
+    /** The FM-1 read straight from USB (UsbAudioIn): when Android offers no USB input, or [ownDriver]. */
     private val usbIn = UsbAudioIn(ctx)
+    /**
+     * While the sound plays on the phone, the FM-1 is read by the app's own driver even when Android offers it as an
+     * input: a Pixel 8a offers it since Android 16, and its capture comes out crackling, metallic and muffled (the
+     * app's driver, used on that phone before, was clean). Played on the FM-1, Android's input is kept: taking the
+     * FM-1's audio from Android's driver could also take away its USB output.
+     */
+    @Volatile var ownDriver = true
+
+    /** The capture again (the output changed: the driver to use may change with it). */
+    fun restartCapture() { if (running) Thread { stopCapture(); startCapture() }.start() }
     private val main = Handler(Looper.getMainLooper())
 
     private val rate = 44100
@@ -202,10 +212,12 @@ class AudioIo(private val ctx: Context) {
     fun startCapture(): String {
         if (!running || rec != null || usbIn.active) return captureStatus()
         if (!captureAllowed) { captureState = tr("capture non autorisée", "capture not allowed"); return captureState }
+        val own = ownDriver && target == OUT_PHONE && usbIn.candidate() != null
         val dev = usbInput()
-        if (dev == null) {                            // the phone offers no USB input: read the FM-1 ourselves
+        if (dev == null || own) {                     // read the FM-1 ourselves (Android offers no USB input, or [ownDriver])
             captureState = usbIn.start()
-            return captureState
+            // (ours failed, and Android has an input: Android's, below)
+            if (usbIn.active || usbIn.waiting || dev == null) return captureState
         }
         val errors = ArrayList<String>()
         for (t in CaptureFormat.tries(dev.channelCounts)) {

@@ -583,7 +583,7 @@ class MainActivity : ComponentActivity() {
                 applyMidiMode()
                 val micOk = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                 applyGains()
-                audio.target = outTarget
+                audio.target = outTarget; audio.ownDriver = prefs.getBoolean("usbOwn", true)
                 audioMsg = audio.start(micOk)
                 if (!micOk) askMic.launch(Manifest.permission.RECORD_AUDIO)
                 showPower()
@@ -1916,6 +1916,11 @@ class MainActivity : ComponentActivity() {
             outTarget == AudioIo.OUT_FM1) { setOut(AudioIo.OUT_FM1) }
         choice(tr("Sur le téléphone", "On the phone"), tr("Le mix complet : un casque branché (USB-C ou adaptateur) d'abord, puis le Bluetooth, sinon le haut-parleur", "The full mix: plugged headphones (USB-C or adapter) first, then Bluetooth, else the speaker"),
             outTarget == AudioIo.OUT_PHONE) { setOut(AudioIo.OUT_PHONE) }
+        group(tr("Le son du FM-1", "The FM-1's sound"))
+        toggle(tr("Lu par le pilote de l'app", "Read by the app's own driver"),
+            tr("Quand le son sort du téléphone. Sinon par Android : sur certains téléphones (Pixel 8a, Android 16), il sort craquant, métallique et étouffé",
+                "When the sound plays on the phone. Otherwise through Android: on some phones (Pixel 8a, Android 16) it comes out crackling, metallic and muffled"),
+            prefs.getBoolean("usbOwn", true)) { audio.ownDriver = it; prefs.edit().putBoolean("usbOwn", it).apply(); audio.restartCapture() }
         note(tr("Sur le téléphone, le FM-1 joue aussi son propre son : baisse son MASTER ; avec LOOM-8, Setup > USB audio sur « stereo » pour qu'il envoie quand même à plein niveau.", "On the phone, the FM-1 also plays its own sound: turn its MASTER down; with LOOM-8, Setup > USB audio on \"stereo\" so that it still sends at full level."))
     }
 
@@ -1924,6 +1929,7 @@ class MainActivity : ComponentActivity() {
         prefs.edit().putInt("out", t).apply()
         audio.target = t
         audio.route()
+        audio.restartCapture()
         fxOutput()
         showSwitches()
     }

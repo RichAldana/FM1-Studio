@@ -30,6 +30,8 @@ class UsbAudioIn(private val ctx: Context) {
     @Volatile private var asking = false
     @Volatile var active = false
         private set
+    /** waiting for the user's answer to Android's access window */
+    val waiting get() = asking
     @Volatile private var state = ""
     private val stats = LongArray(5)
 

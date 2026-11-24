@@ -44,7 +44,12 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
   veut : dossier, carte SD, Drive) ou « Envoyer… » (mail, WhatsApp, Signal…).
 - Projets version 2 : ils gardent aussi l'effet de chaque piste et les motions ; les projets 0.27 s'ouvrent toujours.
 - Encodeur FLAC maison (`native/src/flac.rs`), lecture par la bibliothèque claxon (Apache-2.0, voir `NOTICE.md`).
-- **Son du FM-1 sur la sortie téléphone** (craquements, son métallique et étouffé) : la capture USB ne passe plus par
+- **Son du FM-1 sur la sortie téléphone** (craquements, son métallique et étouffé, Pixel 8a sous Android 16) : depuis
+  Android 16, le Pixel 8a propose le FM-1 en entrée audio, et l'app passait par cette capture d'Android au lieu de son
+  propre pilote USB (celui de la 0.7, propre sur ce téléphone). Quand le son sort du téléphone, le FM-1 est de nouveau lu
+  par le pilote de l'app (Réglages › Sortie › « Lu par le pilote de l'app », activé par défaut) ; quand il sort sur le
+  FM-1, Android garde la main (prendre l'interface audio du FM-1 pourrait lui retirer sa sortie USB).
+  Pour la capture d'Android, quand elle sert encore : elle ne passe plus par
   la source « MIC » d'Android (traitée comme une voix sur certains téléphones) mais par UNPROCESSED, sinon
   VOICE_RECOGNITION (plate, sans contrôle de gain ni réduction de bruit), et l'app coupe ce que le téléphone ajouterait
   encore (réduction de bruit, gain automatique, annulation d'écho). La ligne d'état dit la source utilisée. Le son
