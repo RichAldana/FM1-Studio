@@ -1,4 +1,4 @@
-# FM1 Mix (bêta, v0.28.2)
+# FM1 Mix (bêta, v0.29.2)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -17,6 +17,110 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- audio USB ---> AudioRecord ---+
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
+
+## v0.29.2 : PANEL MIDI avec Skiff (Skiff-Remote), et tout firmware qui parle le protocole commun
+### What's new since 0.28 (English)
+
+**0.29.2**
+- **PANEL MIDI with Skiff:** the app now lends the panel of a FM-1 running **Skiff-Remote** (Skiff 2.7.1 with PANEL MIDI, installable from LOOM8-Remote's install page, which now asks which firmware) as it does with LOOM-8.
+  - One common protocol for any firmware (docs/PANEL-MIDI.md): the app asks every USB MIDI device once, the firmware answers with its name and what it leaves aside while lent.
+  - Settings › MIDI shows the FM-1's name and what it sets aside (on Skiff: SYNC OUT, CLICK, USB LEVEL, its MIDI out on channels 15 and 16).
+  - LOOM-8 PANEL MIDI 0.18.2-pm1 keeps working as before.
+- **Skiff-Remote** (the firmware, its own repository): MENU › MIDI › PANEL MIDI, GLO + FX held one second, and MENU › AUDIO › USB PLAY (the phone's sound in the FM-1's headphones and speaker, as on LOOM-8).
+
+**0.29.1**
+- **Hardware MASTER kept:** the on-screen MASTER now follows the plugged FM-1's MASTER (PANEL MIDI) and remembers it. The emulator no longer restarts at a stale level that couldn't be raised.
+- **Finer MASTER:** MASTER now uses 14 bits (CC 7 + CC 39) instead of 128 steps, and motions record the hardware MASTER like the on-screen one.
+- **On-screen panel mirrors the FM-1's panel:** buttons and keys press down, encoders turn and MASTER moves when you play the real FM-1.
+- **Steady MIDI clock to the emulator:** ticks that Android delivers in bunches are put back on the tempo and played to the emulated firmware evenly. In a desktop test, ±22 ms of jitter went down to ±0.7 ms.
+  - Start, Continue and Stop keep their place among the ticks.
+  - The emulator now hears the clock after a fixed delay, so "Align the two FM-1s" may need a small retouch.
+- **Clock diagnostic:** Settings › Diagnostic shows the clock's spread as it arrives and as it's played.
+- **Loops follow Start/Stop** (Settings › MIDI, on by default): Stop stops the playing loops, Start or Continue restarts them all from their beginning on the first beat.
+- **PANEL MIDI LEDs fixed:**
+  - LEDs are scaled to full brightness: they all looked dim before, and the faintest ones went out.
+  - Each LED is mapped to one of LOOM-8's four levels, with a margin so it no longer flickers at a threshold.
+  - The app only sends LED updates when a level changes.
+- **CPU:** no measurable extra load from any of these.
+
+**0.29**
+- **Firmware manager** (Settings › FM-1 hardware, or a firmware's page › "Flash onto the FM-1…"):
+  - Flash the USB-plugged FM-1 with a firmware from the Hub, from the bank, or from a file.
+  - Three steps: choose, checks before the first byte is written, writing.
+  - The checks: Hub checksum, package structure, FM-1 model, battery at 30 % or charging, MIDI reserved for the flash.
+  - "Back up first" saves the firmware's projects and sounds when it supports backups (LOOM-8).
+  - "Install m-bootloader after" adds a rescue menu (hold PLAY at power-on). m-bootloader 2.4 is bundled (MIT) and checked by its SHA-256 before use.
+  - A cut install resumes where it stopped, even after restarting the app (Rescue › Resume).
+  - The FM-1's identity is read back after the reboot, and LOOM-8's resource region is written after the install.
+  - M-VAVE's original firmware can be put back from your own V15/V16 file, checked by its checksum.
+- **Firmware bank** in `Documents/FM1 Mix/Firmwares`:
+  - Initial: the packages as published.
+  - Backups: per firmware and date, with the package, the data and an info sheet.
+  - History: every flash and backup. The whole bank exports as a .zip.
+- **Real FM-1 backups load into the emulator:** when you pick a firmware with a backup in the bank, the app asks which to load (the backup, recommended, or the initial version). Your LOOM-8 projects and sounds then arrive in the emulator.
+- **Projects moved** to `Documents/FM1 Mix/Projets`, once, automatically.
+- **Sound out on the FM-1:** the FM-1's sound is now read by the app's own USB driver here too, so recordings are no longer metallic or muffled.
+  - If Android loses its USB output to the FM-1, the app falls back to Android's capture automatically.
+- **Master meter:** in FM-1 output mode, the master meter now shows the level, the FM-1 included.
+
+**0.28.1 / 0.28.2**
+- **Clean FM-1 sound on the phone output:** fixed crackly, metallic, muffled sound on the Pixel 8a with Android 16. The FM-1 is read by the app's own USB driver again, toggled in Settings › Output › "Read by the app's driver".
+- **Stable BPM display:** the MIDI clock's tempo no longer jumps to tens of thousands of BPM. It's measured over the last 4 beats.
+- **Effects page:** a track's dot no longer covers its name.
+- **No late audio on effect changes:** while an effect changes, one audio block plays dry instead of late.
+
+**Still untested on real hardware:** flashing and backups (tested on a computer against the real update loader and an emulated LOOM-8), everything in 0.29.1, and Skiff-Remote (its protocol and USB PLAY are tested on a computer; the firmware itself is built only on GitHub).
+
+### En français (0.29.2)
+- **PANEL MIDI avec Skiff** : l'app prête aussi le panneau d'un FM-1 sous **Skiff-Remote** (Skiff 2.7.1 avec PANEL MIDI,
+  installable depuis la page d'installation de LOOM8-Remote, qui demande maintenant quel firmware). Un seul protocole
+  pour tous les firmwares (`docs/PANEL-MIDI.md`) : l'app interroge une fois chaque appareil MIDI USB, le firmware répond
+  avec son nom et ce qu'il met de côté pendant le prêt (affiché dans Réglages › MIDI). LOOM-8 0.18.2-pm1 marche comme avant.
+
+## v0.29.1 : MASTER du FM-1 retenu, horloge régulière vers l'émulé, boucles sur Start/Stop, LEDs de PANEL MIDI
+
+### En français (0.29.1)
+- **MASTER par PANEL MIDI** : le potard de l'écran suit le MASTER du FM-1 et le garde. Avant, chaque redémarrage de
+  l'émulé lui redonnait l'ancien niveau de l'écran, et LOOM-8 n'envoie son MASTER que quand on le bouge : déjà tourné
+  à fond, il ne pouvait plus remonter. Le MASTER passe aussi en 14 bits (CC 7 puis CC 39) au lieu de 128 pas, et une
+  motion l'enregistre comme le potard de l'écran. Le temps de réaction de l'app est celui du potard de l'écran (40 à
+  60 ms) ; CoralFlower lisse lui-même son MASTER (environ 0,4 s pour arriver : son code, comme sur un vrai FM-1).
+- **Le panneau de l'écran suit celui du FM-1** (PANEL MIDI) : ses boutons et ses touches s'enfoncent, ses encodeurs
+  tournent, son MASTER bouge, comme si on les touchait à l'écran.
+- **L'horloge vers l'émulé** : les tops arrivent d'Android par paquets ; ils sont maintenant remis sur le tempo
+  (l'heure d'arrivée de chaque top, la tendance des 4 derniers temps) et joués à l'émulé à intervalles réguliers, avec
+  un retard fixe (environ la file audio de l'émulé). Mesuré sur ordinateur avec des paquets de 5 à 50 ms : ±22 ms
+  d'écart entre les tops à l'arrivée, ±0,7 ms à l'émulé. Start, Continue et Stop gardent leur place parmi les tops.
+  Le firmware doit être réglé sur l'horloge externe (clock in). Réglages › Diagnostic montre ces écarts sur le téléphone.
+  Le retard des tops change un peu : revoir au besoin « Alignement des deux FM-1 ».
+- **Les boucles suivent Start/Stop** (Réglages › MIDI, activé d'office) : Stop arrête les boucles qui jouent, Start
+  (ou Continue) les relance toutes depuis leur début, sur le premier temps.
+- **LEDs en PANEL MIDI** : le FM-1 allume ses LEDs par balayage, une LED pleinement allumée ne l'est qu'un dixième du
+  temps ; envoyées telles quelles, toutes paraissaient faibles sur LOOM-8 et les plus pâles s'éteignaient. Elles sont
+  maintenant ramenées au plein niveau et rangées dans les quatre niveaux de LOOM-8 avec une marge (plus de va-et-vient
+  autour d'un seuil), envoyées seulement quand un niveau change.
+- Coût processeur : aucun écart mesurable sur la charge de l'émulateur ; quelques dixièmes de microseconde par
+  rafraîchissement côté écran.
+
+## v0.29 : le gestionnaire de firmwares, le son du FM-1 propre en sortie FM-1
+- **Gestionnaire de firmwares** (Réglages › FM-1 matériel ; et la page d'un firmware › « Flasher sur le FM-1… ») :
+  flasher le FM-1 branché en USB avec un firmware du Hub, de la banque ou un fichier, en trois étapes (choix,
+  vérifications avant le premier octet, écriture). « Sauvegarder d'abord » garde les projets et les sons du firmware
+  en place quand il sait se sauvegarder (LOOM-8) ; « Installer m-bootloader après » ajoute le menu de secours (PLAY à
+  l'allumage). Une écriture coupée reprend là où elle s'était arrêtée, même après avoir relancé l'app (Secours ›
+  Reprendre). Le firmware M-VAVE V15/V16 se remet depuis ton fichier, vérifié par son empreinte.
+- **La banque** dans `Documents/FM1 Mix/Firmwares` : `Initial` (les paquets tels que publiés), `Sauvegardes` (par
+  firmware et par date : le paquet, les données, une fiche), `Historique.json` ; exportable en `.zip`.
+- **L'émulé reprend une sauvegarde du vrai FM-1** : en choisissant un firmware dont la banque a une sauvegarde, l'app
+  demande laquelle charger (la sauvegarde, conseillée, ou la version initiale) ; avec la sauvegarde, tes projets et
+  tes sons de LOOM-8 arrivent dans l'émulé.
+- Les projets passent dans `Documents/FM1 Mix/Projets` (déplacés une fois, tout seuls).
+- **Sortie sur le FM-1** : le son du FM-1 est lu par le pilote de l'app là aussi (l'enregistrement n'est plus
+  métallique ni étouffé sur le Pixel), avec un repli sur la capture d'Android si la sortie USB vers le FM-1 se perdait.
+  La jauge du master montre le niveau (FM-1 compris).
+- Testé sur ordinateur, pas encore sur un vrai FM-1 : le flashage contre le vrai chargeur de mise à jour
+  (`tools/ota_check/run.sh`), la sauvegarde et la restauration contre LOOM-8 émulé par l'app
+  (`tools/ota_check/run_emu.sh`). Premier essai réel : avec un moyen de secours sous la main.
 
 ## v0.28.1 et v0.28.2 : le son du FM-1 propre sur la sortie téléphone, un tempo stable
 - **Tempo de l'horloge MIDI** : l'affichage sautait sans cesse, jusqu'à des dizaines de milliers de BPM. Android livre

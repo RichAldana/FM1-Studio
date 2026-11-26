@@ -30,7 +30,7 @@ import java.security.MessageDigest
  * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
 /** shown in About and in error reports; keep in step with versionName (app/build.gradle.kts) */
-const val APP_VERSION = "0.28.2"
+const val APP_VERSION = "0.29.2"
 
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView
@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
     private var recSize = 17f
     private val recorder by lazy { Recorder(this) }
     private lateinit var midiLamp: MidiLamp
-    /** the plugged FM-1's panel lent to the emulated one (LOOM-8's PANEL MIDI) */
+    /** the plugged FM-1's panel lent to the emulated one (PANEL MIDI: LOOM-8, Skiff-Remote...) */
     private val panelRemote by lazy { PanelRemote(this) { onPanel(it) } }
     /** the MIDI mode and profile before the panel came, put back when it goes */
     private var beforePanel: Pair<Int, String>? = null
@@ -79,6 +79,13 @@ class MainActivity : ComponentActivity() {
     private val audio by lazy { AudioIo(this) }
     private val midi by lazy { MidiIn(this) }
     private val prefs by lazy { getSharedPreferences("fm1mix", MODE_PRIVATE) }
+    /** the firmware manager (FirmwareManager.kt): the real FM-1 flashed, backed up, the bank */
+    private val fwm by lazy { FirmwareManager(this, fwHost) }
+    /** the manager has the FM-1's MIDI to itself (a flash, a backup): MidiIn deaf, PANEL MIDI let go */
+    private var fwHeld = false
+    /** a backup to give back to the emulated FM-1 once it has started (its USB cable in for that start) */
+    private var pendingRestore: FirmwareBank.Save? = null
+    private var pickedFw: ((ByteArray, String) -> Unit)? = null
 
     /** "cat:<id>" for a firmware of the catalogue (downloaded into the app), "file:<name>" for one imported. */
     private var firmware = DEFAULT_FW
@@ -122,6 +129,7 @@ class MainActivity : ComponentActivity() {
     private val leds = FloatArray(41)
     private val mt = FloatArray(2)
     private val mi = IntArray(2)
+    private val pin = IntArray(10)
 
     companion object {
         /** none: the user picks the first firmware (then the last one chosen comes back) */
@@ -146,6 +154,52 @@ class MainActivity : ComponentActivity() {
             selectFirmware("file:$name")
         }
     }
+    private val pickFwFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val then = pickedFw
+        pickedFw = null
+        if (uri != null && then != null) {
+            val r = runCatching {
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException()
+                val name = Project.shownName(this, uri) ?: (uri.lastPathSegment ?: "firmware.fwsc").substringAfterLast('/').substringAfterLast(':')
+                bytes to name
+            }.getOrNull()
+            if (r == null) Toast.makeText(this, tr("Fichier illisible", "Unreadable file"), Toast.LENGTH_LONG).show() else then(r.first, r.second)
+        }
+    }
+
+    private val fwHost = object : FirmwareManager.Host {
+        override fun catalog() = cat().entries
+        override fun installed(e: FirmwareCatalog.Entry): File? = store.installed(e.id)?.takeIf { it.version == e.version }?.file
+        override fun download(e: FirmwareCatalog.Entry, then: (File?, String?) -> Unit) =
+            fetch(e) { err -> then(if (err == null) store.installed(e.id)?.file else null, err) }
+        override fun hold(on: Boolean) {
+            fwHeld = on
+            midi.paused = on
+            if (on) panelRemote.stop() else panelRemote.start()
+        }
+        override fun emulate(e: FirmwareCatalog.Entry, save: FirmwareBank.Save?) {
+            if (save == null || save.data == null) { runFirmwarePlain(e); return }
+            pendingRestore = save
+            Native.setEmuUsb(true)
+            if (firmware == "cat:${e.id}" && (running || booting) && store.isCurrent(e)) { sheet?.close(); powerOff(); powerOn() }
+            else runFirmwarePlain(e)
+        }
+        override fun pickFile(then: (ByteArray, String) -> Unit) { pickedFw = then; pickFwFile.launch(arrayOf("*/*")) }
+        override fun share(f: File, mime: String, subject: String) {
+            val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.export", f)
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                putExtra(android.content.Intent.EXTRA_SUBJECT, subject)
+                clipData = android.content.ClipData.newRawUri("", uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            runCatching { startActivity(android.content.Intent.createChooser(send, subject)) }
+                .onFailure { Toast.makeText(this@MainActivity, tr("Aucune application pour l'envoyer", "No app to send it"), Toast.LENGTH_LONG).show() }
+        }
+        override fun say(text: String) { status.text = text }
+    }
+
     /** the system's file picker, opened in [folder] (Music/FM1 Mix for the loops, Documents/Fm1mix projects) */
     private class OpenInFolder(private val folder: android.net.Uri) : androidx.activity.result.contract.ActivityResultContract<Array<String>, android.net.Uri?>() {
         override fun createIntent(context: android.content.Context, input: Array<String>) =
@@ -226,6 +280,10 @@ class MainActivity : ComponentActivity() {
         catchCrashes()
         Native.loadError?.let { showFatal(tr("Le moteur de l'app (libfm1mix.so) ne se charge pas sur ce téléphone.", "The app's engine (libfm1mix.so) does not load on this phone."), it); return }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (!prefs.getBoolean("projMoved", false)) saver.execute {     // (0.29: Documents/FM1 Mix/Projets)
+            runCatching { Project.migrate(this) }
+            prefs.edit().putBoolean("projMoved", true).apply()
+        }
         firmware = prefs.getString("firmware", DEFAULT_FW) ?: DEFAULT_FW
         if (firmware.startsWith("asset:")) firmware = "cat:chordism"      // (0.9 and before: Chordism built in)
         loadFirmwarePrefs()
@@ -462,7 +520,8 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         midi.onPanelOct = { d -> ui.post { moveOctave(d) } }
         midi.connect(ui)
-        panelRemote.start()
+        midi.paused = fwHeld
+        if (!fwHeld) panelRemote.start()
         // the machine is switched on with the app (and back on when the app comes back), unless the user turned it off
         if (prefs.getBoolean("power", true)) powerOn() else showPower()
     }
@@ -519,6 +578,8 @@ class MainActivity : ComponentActivity() {
                     if (pct != downloadPct) { downloadPct = pct; ui.post { onDownload() } }
                 })
             }
+            // (the package as published, into the bank's Initial too: Documents/FM1 Mix/Firmwares/Initial)
+            r.getOrNull()?.let { inst -> runCatching { fwm.bank.keepInitial("${e.id}-${e.version}.fwsc", inst.file.readBytes()) } }
             ui.post {
                 downloading = null
                 downloadPct = -1
@@ -567,8 +628,11 @@ class MainActivity : ComponentActivity() {
         val chip = newChip
         Thread {
             val err = Native.start(bytes, flash.takeIf { it.exists() }?.readBytes(), chosenMhz, chip)
+            Native.setEmuUsb(false)                  // (its cable in for this start only)
             ui.post {
                 booting = false
+                val give = pendingRestore
+                pendingRestore = null
                 if (err.isNotEmpty()) {
                     status.text = tr("Échec du démarrage : $err", "Start failed: $err")
                     showPower()
@@ -580,6 +644,7 @@ class MainActivity : ComponentActivity() {
                 applyMix()
                 FxState.sendAll()
                 Native.pot(panel.potValue)
+                Native.loopFollow(prefs.getBoolean("loopFollow", true))
                 applyMidiMode()
                 val micOk = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                 applyGains()
@@ -590,6 +655,42 @@ class MainActivity : ComponentActivity() {
                 ui.removeCallbacks(tick)
                 ui.post(tick)
                 refreshCatalog(false)
+                give?.let { restoreIntoEmu(it) }
+            }
+        }.start()
+    }
+
+    /**
+     * A backup from the bank given back to the emulated FM-1 just started with its USB cable in: by the same protocol
+     * as to a real FM-1 (Fm1Backup.kt over the emulated USB-MIDI); the app answers yes to its "RESTORE FROM USB?" (SEL),
+     * then LOOM-8's sounds. What it then saves is kept as the emulated firmware's memory.
+     */
+    private fun restoreIntoEmu(s: FirmwareBank.Save) {
+        status.text = tr("Remise de la sauvegarde du ${s.when_} dans l'émulé…", "Giving the ${s.when_} backup to the emulated FM-1…")
+        Thread {
+            val r = runCatching {
+                val (img, sections) = Fm1Backup.split(fwm.bank.read(s.data!!.uri))
+                val t = System.currentTimeMillis()
+                while (Native.emuUsbProduct().isEmpty()) {
+                    if (System.currentTimeMillis() - t > 20000) throw IllegalStateException(tr("l'émulé ne s'est pas présenté en USB", "the emulated FM-1 did not show up over USB"))
+                    Thread.sleep(100)
+                }
+                Thread.sleep(1500)                   // (the firmware's own start)
+                val link = EmuUsbLink()
+                val id = Fm1Ota.handshake(link) ?: throw IllegalStateException(tr("l'émulé ne répond pas", "the emulated FM-1 does not answer"))
+                val rc = Fm1Backup.restore(link, img, onAsk = {
+                    Thread { Thread.sleep(400); Native.key(3, true); Thread.sleep(150); Native.key(3, false) }.start()   // SEL: yes
+                })
+                if (rc != 0) throw IllegalStateException(Fm1Backup.error(rc) + " (${id.text})")
+                sections.firstOrNull { it.first == "LSMP" }?.second?.let { bank ->
+                    Thread.sleep(1500)
+                    ui.post { status.text = tr("Remise de ses sons dans l'émulé…", "Giving its sounds to the emulated FM-1…") }
+                    LoomBank(link).write(bank)
+                }
+            }
+            ui.post {
+                r.onSuccess { Toast.makeText(this, tr("Sauvegarde du ${s.when_} chargée dans l'émulé", "The ${s.when_} backup loaded in the emulated FM-1"), Toast.LENGTH_LONG).show(); status.text = firmwareName() }
+                r.onFailure { status.text = tr("Sauvegarde non chargée : ", "Backup not loaded: ") + (it.message ?: it.toString()) }
             }
         }.start()
     }
@@ -748,11 +849,16 @@ class MainActivity : ComponentActivity() {
             keysPanel.update(px, leds)
             // the peaks of this frame: the mixer's meters, the recorder's wave, the status line's
             Native.meters(m4)
-            mixView.levels(m4[0], m4[1], m4[2], m4[4])
+            // (played on the FM-1, its sound does not go through the phone's output: the master shows what is heard
+            // and recorded, the FM-1 with the emulated one, as the recording holds it)
+            mixView.levels(m4[0], m4[1], if (outTarget == AudioIo.OUT_FM1) maxOf(m4[2], m4[3]) else m4[2], m4[4])
             loopsView.update()
             if (recorder.recording) recView.addPeak(m4[3])
             statPeak[0] = maxOf(statPeak[0], m4[0]); statPeak[1] = maxOf(statPeak[1], m4[1])
             panelRemote.lights(leds)
+            followMaster()
+            Native.panelIn(pin)                       // what the FM-1's panel presses and turns, shown on the screen's
+            panel.far(pin); keysPanel.far(pin)
             Native.midiInfo(mi)
             if (recorder.recording && n % 15 == 0) showRec()
             val now = System.currentTimeMillis()
@@ -788,6 +894,23 @@ class MainActivity : ComponentActivity() {
             }
             ui.postDelayed(this, 33)
         }
+    }
+
+    /** the plugged FM-1's MASTER (PANEL MIDI, through the panel profile) is the screen's pot too: shown, kept for
+     *  the next start (a restart gave the emulated FM-1 the screen's old level, and LOOM-8 sends MASTER only when it
+     *  moves: turned all the way up already, it could not be raised), and recorded by a motion like the screen's */
+    private var potSavedAt = 0L
+    private var potUnsaved = false
+    private fun followMaster() {
+        val v = Native.potIn()
+        val now = System.currentTimeMillis()
+        if (v >= 0) {
+            panel.potValue = v
+            panel.invalidate()
+            Motion.input("pot", v.toFloat())
+            potUnsaved = true
+        }
+        if (potUnsaved && now - potSavedAt >= 500) { fwPut("pot", panel.potValue); potSavedAt = now; potUnsaved = false }
     }
 
     // ------------------------------------------------------------------ the motions (Motion.kt)
@@ -1599,7 +1722,7 @@ class MainActivity : ComponentActivity() {
 
     /** The firmware catalogue: search, filters, one row each (what it is, and what touching its button does). */
     private fun openCatalog() {
-        val sh = Sheet(this).onClose { catalogList = null; sheet = null }
+        val sh = Sheet(this).onClose { catalogList = null; sheet = null; fwm.closed() }
         sheet = sh
         sh.show("Firmwares") { catalogPage(sh) }
         if (System.currentTimeMillis() - store.updatedAt() > FirmwareStore.DAY_MS) refreshCatalog(false) { if (catalogList != null) renderCatalogList() }
@@ -1725,9 +1848,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** install it if needed (or update it), then run it */
+    /** install it if needed (or update it), then run it; with a backup of it in the bank, which version first */
     private fun runFirmware(e: FirmwareCatalog.Entry) {
         if (e.byo) { sheet?.push(e.name) { firmwarePage(e) }; return }
+        if (downloading != null) return
+        if (firmware == "cat:${e.id}" && (running || booting) && store.isCurrent(e)) { sheet?.close(); return }
+        val sh = sheet
+        if (sh != null && runCatching { fwm.askEmulated(sh, e, stateFile("cat:${e.id}").exists()) { runFirmwarePlain(e) } }.getOrDefault(false)) return
+        runFirmwarePlain(e)
+    }
+
+    private fun runFirmwarePlain(e: FirmwareCatalog.Entry) {
         if (downloading != null) return
         if (firmware == "cat:${e.id}" && (running || booting) && store.isCurrent(e)) { sheet?.close(); return }   // (already the one)
         if (store.isCurrent(e)) { selectFirmware("cat:${e.id}"); return }
@@ -1748,9 +1879,13 @@ class MainActivity : ComponentActivity() {
                 p.action(tr("Importer le fichier .fwsc…", "Import the .fwsc file…")) { importFw.launch(arrayOf("*/*")) }
             }
             firmware == "cat:${e.id}" && running -> p.info(tr("État", "Status"), tr("en cours", "running"))
-            inst != null && inst.version == e.version -> p.action(tr("Lancer", "Start")) { selectFirmware("cat:${e.id}") }
+            inst != null && inst.version == e.version -> p.action(tr("Lancer", "Start")) { runFirmware(e) }
             inst != null -> p.action(tr("Mettre à jour vers ${e.version} et lancer", "Update to ${e.version} and start"), tr("sur le téléphone : ${inst.version}", "on the phone: ${inst.version}")) { runFirmware(e) }
             else -> p.action(tr("Installer et lancer", "Install and start"), e.size?.let { kb(it) }) { runFirmware(e) }
+        }
+        if (!e.byo && e.pkg != null) {
+            p.group(tr("FM-1 branché", "Plugged FM-1"))
+            p.nav(tr("Flasher sur le FM-1…", "Flash onto the FM-1…"), null, tr("le même parcours que le gestionnaire, avec ce firmware déjà choisi", "the manager's own steps, with this firmware already chosen")) { sheet?.let { fwm.flash(it, e) } }
         }
         p.group(tr("Informations", "Information"))
         p.info("Version", e.version.ifEmpty { "—" })
@@ -1794,12 +1929,14 @@ class MainActivity : ComponentActivity() {
 
     /** The settings, grouped; [midiOnly]: straight to the MIDI page (the MIDI light in the bar) */
     private fun openSettings(midiOnly: Boolean = false) {
-        val sh = Sheet(this).onClose { sheet = null; catalogList = null }
+        val sh = Sheet(this).onClose { sheet = null; catalogList = null; fwm.closed() }
         sheet = sh
         if (midiOnly) { sh.show("MIDI") { midiPage() }; return }
         sh.show(tr("Réglages", "Settings")) {
             group("Firmware")
             nav("Firmware", firmwareLabel(firmware).lowercase().replaceFirstChar { it.uppercase() }) { sh.push("Firmwares") { catalogPage(sh) } }
+            group(tr("FM-1 matériel", "FM-1 hardware"))
+            nav(tr("Gestionnaire de firmwares", "Firmware manager"), null, tr("Flasher le FM-1, sauvegarder, la banque", "Flash the FM-1, back up, the bank")) { fwm.open(sh) }
             group(tr("Projet", "Project"))
             nav(tr("Enregistrer", "Save"), projShown(),
                 tr("Le firmware et sa mémoire, ses réglages, le mixeur, les effets, les motions et les boucles",
@@ -1918,8 +2055,8 @@ class MainActivity : ComponentActivity() {
             outTarget == AudioIo.OUT_PHONE) { setOut(AudioIo.OUT_PHONE) }
         group(tr("Le son du FM-1", "The FM-1's sound"))
         toggle(tr("Lu par le pilote de l'app", "Read by the app's own driver"),
-            tr("Quand le son sort du téléphone. Sinon par Android : sur certains téléphones (Pixel 8a, Android 16), il sort craquant, métallique et étouffé",
-                "When the sound plays on the phone. Otherwise through Android: on some phones (Pixel 8a, Android 16) it comes out crackling, metallic and muffled"),
+            tr("Sinon par Android : sur certains téléphones (Pixel 8a, Android 16), il sort craquant, métallique et étouffé. Si cela coupe la sortie vers le FM-1, l'app rend la main à Android d'elle-même",
+                "Otherwise through Android: on some phones (Pixel 8a, Android 16) it comes out crackling, metallic and muffled. If it cuts the output to the FM-1, the app gives it back to Android by itself"),
             prefs.getBoolean("usbOwn", true)) { audio.ownDriver = it; prefs.edit().putBoolean("usbOwn", it).apply(); audio.restartCapture() }
         note(tr("Sur le téléphone, le FM-1 joue aussi son propre son : baisse son MASTER ; avec LOOM-8, Setup > USB audio sur « stereo » pour qu'il envoie quand même à plein niveau.", "On the phone, the FM-1 also plays its own sound: turn its MASTER down; with LOOM-8, Setup > USB audio on \"stereo\" so that it still sends at full level."))
     }
@@ -1981,25 +2118,32 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun panelSub(): String {
-        val nm = panelRemote.name?.substringBefore(" / ") ?: "LOOM-8"
-        return tr("$nm : ses touches, boutons, encodeurs et MASTER pilotent l'émulé, ses voyants montrent ceux de l'émulé. ", "$nm: its keys, buttons, encoders and MASTER play the emulated one, its lights show the emulated one's. ") +
+        val nm = panelRemote.name?.substringBefore(" / ") ?: "FM-1"
+        val m = panelRemote.masked.takeIf { it.isNotBlank() }?.let { tr(" Pendant ce temps il met de côté : $it.", " Meanwhile it leaves aside: $it.") } ?: ""
+        return tr("$nm : ses touches, boutons, encodeurs et MASTER pilotent l'émulé, ses voyants montrent ceux de l'émulé.", "$nm: its keys, buttons, encoders and MASTER play the emulated one, its lights show the emulated one's.") + m + " " +
             tr("Raccourcis : appui long sur MIDI ici, GLO + FX une seconde sur le FM-1.", "Shortcuts: long press on MIDI here, GLO + FX for a second on the FM-1.")
     }
 
     private fun Sheet.Page.midiPage() {
         group(tr("Contrôles du FM-1 branché", "Plugged FM-1's controls"))
         when (panelRemote.state) {
-            null -> note(tr("Aucun LOOM-8 avec PANEL MIDI branché en USB : ses contrôles restent à lui. (LOOM-8 de la version ", "No LOOM-8 with PANEL MIDI plugged over USB: its controls stay its own. (LOOM-8 from the ") +
-                tr("forkée, avec PANEL MIDI dans Setup > USB and MIDI.)", "forked version, with PANEL MIDI in Setup > USB and MIDI.)"))
+            null -> note(tr("Aucun FM-1 avec PANEL MIDI branché en USB : ses contrôles restent à lui. (LOOM-8 ou Skiff dans leur version PANEL MIDI, installable depuis la page de LOOM8-Remote.)",
+                "No FM-1 with PANEL MIDI plugged over USB: its controls stay its own. (LOOM-8 or Skiff in their PANEL MIDI version, from LOOM8-Remote's install page.)"))
             else -> toggle(tr("Piloter l'émulé", "Play the emulated one"), panelSub(), panelRemote.state == true) { panelRemote.set(it) }
         }
+        group(tr("Horloge du FM-1 maître", "The clock master FM-1"))
+        toggle(tr("Les boucles suivent Start/Stop", "The loops follow Start/Stop"),
+            tr("Stop arrête les boucles qui jouent ; Start les relance toutes depuis leur début, sur le premier temps", "Stop stops the loops playing; Start starts them all again from their beginning, on the first beat"),
+            prefs.getBoolean("loopFollow", true)) { prefs.edit().putBoolean("loopFollow", it).apply(); Native.loopFollow(it) }
+        note(tr("L'émulé reçoit toujours l'horloge, Start et Stop, régularisés (l'heure d'arrivée de chaque top, remise sur le tempo) : règle son firmware sur l'horloge externe (clock in) pour qu'il suive.",
+            "The emulated FM-1 always gets the clock, Start and Stop, evened out (each tick's arrival put back on the tempo): set its firmware to the external clock (clock in) for it to follow."))
         group(tr("Ce que fait le MIDI reçu", "What received MIDI does"))
         for ((t, sub, k) in MIDI_MODES) choice(t, sub, midiMode == k) { midiMode = k; fwPut("midiMode", k); applyMidiMode() }
         group(tr("Profil du contrôleur (« Piloter le panneau »)", "Controller profile (\"Play the panel\")"))
         val names = (assets.list("profiles")?.toList() ?: emptyList()) + (File(filesDir, "profiles").list()?.toList() ?: emptyList())
         for (nm in names) choice(nm.removeSuffix(".json"), null, nm == profileName) { profileName = nm; fwPutStr("profile", nm); applyMidiMode() }
         action(tr("Charger un profil JSON…", "Load a JSON profile…")) { pickProfile.launch(arrayOf("*/*")) }
-        note(tr("remotefm1-panel : choisi tout seul quand LOOM-8 prête ses contrôles, l'ancien réglage revient après.", "remotefm1-panel: chosen on its own when LOOM-8 lends its controls, the previous setting comes back after."))
+        note(tr("remotefm1-panel : choisi tout seul quand le FM-1 prête ses contrôles, l'ancien réglage revient après.", "remotefm1-panel: chosen on its own when the FM-1 lends its controls, the previous setting comes back after."))
     }
 
     private fun Sheet.Page.recContentPage() {
@@ -2038,7 +2182,10 @@ class MainActivity : ComponentActivity() {
     private fun Sheet.Page.diagnosticPage() {
         val diag = Diagnostic.report(this@MainActivity) + tr("\nCapture : ", "\nCapture: ") + audio.captureStatus() + "\n" + audio.usbReport() +
             tr("\nMoteur : ", "\nEngine: ") + (if (running) Native.status() else tr("éteint", "off")) +
-            tr(" (« ADPF » à la fin : l'aide du processeur tourne)", " (\"ADPF\" at the end: the CPU help is running)")
+            tr(" (« ADPF » à la fin : l'aide du processeur tourne)", " (\"ADPF\" at the end: the CPU help is running)") +
+            (if (running) FloatArray(4).also { Native.clockInfo(it) }.let { c ->
+                tr("\nHorloge MIDI vers l'émulé : écart des tops ±%.1f ms à l'arrivée, ±%.1f ms joués ; retard fixe %.0f ms (+%.0f)",
+                    "\nMIDI clock to the emulated FM-1: ticks spread ±%.1f ms as they came, ±%.1f ms as played; fixed delay %.0f ms (+%.0f)").format(c[0], c[1], c[3], c[2]) } else "")
         group()
         action(tr("Copier le diagnostic", "Copy the diagnostic")) {
             val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -2057,6 +2204,9 @@ class MainActivity : ComponentActivity() {
         info(tr("Émulateur fm1-emu", "fm1-emu emulator"), "MIT · Joakim Eriksson")
         info(tr("Découpe (CHOP de SLOOP)", "Slicing (SLOOP's CHOP)"), "GPL-3.0")
         info(tr("Envoi vers LOOM-8", "Sending to LOOM-8"), "MPL-2.0 · Charles Vestal")
+        info(tr("Gestionnaire de firmwares : mise à jour USB, sauvegardes, ressources", "Firmware manager: USB update, backups, resources"),
+            "MPL-2.0 · Charles Vestal (fm1-base), Leo Kuroshita (Hügelton Instruments), Chris Farrell (fm-static), Kerem Kilic (Ellic Studio)")
+        info(tr("m-bootloader (menu de secours, livré dans l'app)", "m-bootloader (rescue menu, shipped in the app)"), "MIT · Julius Vitkauskas")
         info(tr("Liste des firmwares", "Firmware list"), "fm1-emu, The Firmware Hub")
         info(tr("Effets du pad : code généré par Faust", "Pad effects: code generated by Faust"), tr("GRAME · bibliothèques Faust", "GRAME · Faust libraries"))
         info(tr("Filtre, Hall, Phaser, Flanger, Overdrive, Pompe", "Filter, Hall, Phaser, Flanger, Overdrive, Pump"), "MIT (STK-4.3) · Julius O. Smith III")
@@ -2073,6 +2223,8 @@ class MainActivity : ComponentActivity() {
         info(tr("Lecture des sons FLAC des projets", "Reading the projects' FLAC sounds"), "Apache-2.0 · Ruud van Asseldonk (claxon)")
         nav(tr("Code de fm1-emu", "fm1-emu's code")) { open("https://github.com/joakimeriksson/fm1-emu") }
         nav("SLOOP") { open("https://github.com/isod89/sloop-fm1") }
+        nav("fm1-base") { open("https://github.com/charlesvestal/fm1-base") }
+        nav("m-bootloader") { open("https://github.com/jvitkauskas/m-bootloader") }
         nav("The Firmware Hub") { open(FirmwareCatalog.HUB) }
         nav("Faust") { open("https://faust.grame.fr") }
         nav(tr("Bibliothèques Faust", "Faust libraries")) { open("https://github.com/grame-cncm/faustlibraries") }
@@ -2096,13 +2248,13 @@ class MainActivity : ComponentActivity() {
     private fun togglePanel() {
         val s = panelRemote.state
         if (s == null) {
-            Toast.makeText(this, tr("Pas de LOOM-8 avec PANEL MIDI branché en USB", "No LOOM-8 with PANEL MIDI plugged over USB"), Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, tr("Pas de FM-1 avec PANEL MIDI branché en USB", "No FM-1 with PANEL MIDI plugged over USB"), Toast.LENGTH_SHORT).show()
             return
         }
         panelRemote.set(!s)
     }
 
-    /** LOOM-8 lent its panel (true), took it back (false) or is gone (null). */
+    /** The FM-1 lent its panel (true), took it back (false) or is gone (null). */
     private fun onPanel(s: Boolean?) {
         val on = s == true
         showSwitches()
