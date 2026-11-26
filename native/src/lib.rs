@@ -8,4 +8,5 @@ pub mod fx;
 pub mod loops;
 pub mod hint;
 pub mod flac;
+pub mod clocksync;
 mod jni_api;

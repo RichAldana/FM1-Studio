@@ -22,6 +22,18 @@ object Native {
     external fun enc(enc: Int, clicks: Int)
     external fun pot(value: Int)
     external fun midi(bytes: ByteArray, len: Int)
+    /** The same with when they arrived ([tNanos]: Android's MIDI timestamp, System.nanoTime's clock): the clock,
+     *  Start and Stop reach the emulated firmware evenly spaced (native/src/clocksync.rs). */
+    external fun midiAt(bytes: ByteArray, len: Int, tNanos: Long)
+    /** MASTER as the plugged FM-1's panel last set it (0..1023), or -1 when unchanged since the last call */
+    external fun potIn(): Int
+    /** out = [the clock's spread as it came, as played to the emulated firmware (ms), how late its trend is put, the delay (ms)] */
+    external fun clockInfo(out: FloatArray)
+    /** out (10) = [held matrix ids 0..31, 32..63 (bits), each encoder's detents turned so far (8)]: what the plugged
+     *  FM-1's panel presses and turns (PANEL MIDI, through the panel profile), for the screen's panel to show */
+    external fun panelIn(out: IntArray)
+    /** the loops follow the clock master's Start, Continue and Stop (native/src/loops.rs) */
+    external fun loopFollow(on: Boolean)
 
     /** 0 = clock/transport only, 1 = everything to MIDI IN, 2 = panel (needs a fm1-map JSON profile). "" or error. */
     external fun setMidiMode(mode: Int, profileJson: String?): String
@@ -51,6 +63,14 @@ object Native {
     external fun setKnobSpeed(quarters: Int, all: Boolean)
     /** the Android performance hint session (ADPF) for the engine thread, from the next start */
     external fun setHint(on: Boolean)
+    /** the emulated FM-1's USB cable in (from the next start): its USB-MIDI, for the firmware manager's backups */
+    external fun setEmuUsb(on: Boolean)
+    /** a whole MIDI message to the emulated FM-1 over its USB */
+    external fun emuUsbSend(msg: ByteArray)
+    /** the next whole message the emulated FM-1 sent over USB, or null */
+    external fun emuUsbTake(): ByteArray?
+    /** the emulated FM-1's USB name once enumerated, else "" */
+    external fun emuUsbProduct(): String
     /** An EQ's bands in dB (-12 .. 12): [source] 0 the emulated FM-1, 1 the real one, 2 the master. */
     external fun setEq(source: Int, low: Float, mid: Float, high: Float)
     /** The pad's effects (native/src/fx.rs): the profiles (assets/fx_profiles.json) loaded and every effect made; "" or the error. */

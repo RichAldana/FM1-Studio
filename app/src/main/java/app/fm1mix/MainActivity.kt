@@ -30,7 +30,7 @@ import java.security.MessageDigest
  * on by itself with the last one chosen. Menus are bottom sheets (Sheet.kt).
  */
 /** shown in About and in error reports; keep in step with versionName (app/build.gradle.kts) */
-const val APP_VERSION = "0.29.2"
+const val APP_VERSION = "0.29.1"
 
 class MainActivity : ComponentActivity() {
     private lateinit var panel: PanelView
@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
     private var recSize = 17f
     private val recorder by lazy { Recorder(this) }
     private lateinit var midiLamp: MidiLamp
-    /** the plugged FM-1's panel lent to the emulated one (PANEL MIDI: LOOM-8, Skiff-Remote...) */
+    /** the plugged FM-1's panel lent to the emulated one (LOOM-8's PANEL MIDI) */
     private val panelRemote by lazy { PanelRemote(this) { onPanel(it) } }
     /** the MIDI mode and profile before the panel came, put back when it goes */
     private var beforePanel: Pair<Int, String>? = null
@@ -2118,17 +2118,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun panelSub(): String {
-        val nm = panelRemote.name?.substringBefore(" / ") ?: "FM-1"
-        val m = panelRemote.masked.takeIf { it.isNotBlank() }?.let { tr(" Pendant ce temps il met de côté : $it.", " Meanwhile it leaves aside: $it.") } ?: ""
-        return tr("$nm : ses touches, boutons, encodeurs et MASTER pilotent l'émulé, ses voyants montrent ceux de l'émulé.", "$nm: its keys, buttons, encoders and MASTER play the emulated one, its lights show the emulated one's.") + m + " " +
+        val nm = panelRemote.name?.substringBefore(" / ") ?: "LOOM-8"
+        return tr("$nm : ses touches, boutons, encodeurs et MASTER pilotent l'émulé, ses voyants montrent ceux de l'émulé. ", "$nm: its keys, buttons, encoders and MASTER play the emulated one, its lights show the emulated one's. ") +
             tr("Raccourcis : appui long sur MIDI ici, GLO + FX une seconde sur le FM-1.", "Shortcuts: long press on MIDI here, GLO + FX for a second on the FM-1.")
     }
 
     private fun Sheet.Page.midiPage() {
         group(tr("Contrôles du FM-1 branché", "Plugged FM-1's controls"))
         when (panelRemote.state) {
-            null -> note(tr("Aucun FM-1 avec PANEL MIDI branché en USB : ses contrôles restent à lui. (LOOM-8 ou Skiff dans leur version PANEL MIDI, installable depuis la page de LOOM8-Remote.)",
-                "No FM-1 with PANEL MIDI plugged over USB: its controls stay its own. (LOOM-8 or Skiff in their PANEL MIDI version, from LOOM8-Remote's install page.)"))
+            null -> note(tr("Aucun LOOM-8 avec PANEL MIDI branché en USB : ses contrôles restent à lui. (LOOM-8 de la version ", "No LOOM-8 with PANEL MIDI plugged over USB: its controls stay its own. (LOOM-8 from the ") +
+                tr("forkée, avec PANEL MIDI dans Setup > USB and MIDI.)", "forked version, with PANEL MIDI in Setup > USB and MIDI.)"))
             else -> toggle(tr("Piloter l'émulé", "Play the emulated one"), panelSub(), panelRemote.state == true) { panelRemote.set(it) }
         }
         group(tr("Horloge du FM-1 maître", "The clock master FM-1"))
@@ -2143,7 +2142,7 @@ class MainActivity : ComponentActivity() {
         val names = (assets.list("profiles")?.toList() ?: emptyList()) + (File(filesDir, "profiles").list()?.toList() ?: emptyList())
         for (nm in names) choice(nm.removeSuffix(".json"), null, nm == profileName) { profileName = nm; fwPutStr("profile", nm); applyMidiMode() }
         action(tr("Charger un profil JSON…", "Load a JSON profile…")) { pickProfile.launch(arrayOf("*/*")) }
-        note(tr("remotefm1-panel : choisi tout seul quand le FM-1 prête ses contrôles, l'ancien réglage revient après.", "remotefm1-panel: chosen on its own when the FM-1 lends its controls, the previous setting comes back after."))
+        note(tr("remotefm1-panel : choisi tout seul quand LOOM-8 prête ses contrôles, l'ancien réglage revient après.", "remotefm1-panel: chosen on its own when LOOM-8 lends its controls, the previous setting comes back after."))
     }
 
     private fun Sheet.Page.recContentPage() {
@@ -2248,13 +2247,13 @@ class MainActivity : ComponentActivity() {
     private fun togglePanel() {
         val s = panelRemote.state
         if (s == null) {
-            Toast.makeText(this, tr("Pas de FM-1 avec PANEL MIDI branché en USB", "No FM-1 with PANEL MIDI plugged over USB"), Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, tr("Pas de LOOM-8 avec PANEL MIDI branché en USB", "No LOOM-8 with PANEL MIDI plugged over USB"), Toast.LENGTH_SHORT).show()
             return
         }
         panelRemote.set(!s)
     }
 
-    /** The FM-1 lent its panel (true), took it back (false) or is gone (null). */
+    /** LOOM-8 lent its panel (true), took it back (false) or is gone (null). */
     private fun onPanel(s: Boolean?) {
         val on = s == true
         showSwitches()

@@ -156,6 +156,8 @@ impl Slot {
 
 pub struct Loops {
     slots: [Slot; SLOTS],
+    /// the slots a Stop stopped (or let go): a Start starts them again
+    resume: [bool; SLOTS],
     /// the internal clock's beat (when no MIDI clock comes)
     beat: f64,
     /// the file the passage screen works on (whole, at its own rate), and its preview
@@ -184,6 +186,7 @@ struct Preview {
 
 static LOOPS: Mutex<Loops> = Mutex::new(Loops {
     slots: [Slot::new(), Slot::new(), Slot::new(), Slot::new()],
+    resume: [false; SLOTS],
     beat: 0.0,
     src: None,
     pv: Preview { on: false, a: 0, b: 0, pos: 0.0, env: 0.0 },
@@ -197,6 +200,9 @@ pub const SRC_MAX_SECONDS: f64 = 600.0;
 static NOTE_HIT: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
 static NOTE_OF: [AtomicI32; SLOTS] = [const { AtomicI32::new(-1) }; SLOTS];
 static START_HIT: AtomicBool = AtomicBool::new(false);
+static STOP_HIT: AtomicBool = AtomicBool::new(false);
+static CONT_HIT: AtomicBool = AtomicBool::new(false);
+static FOLLOW: AtomicBool = AtomicBool::new(true);
 /// the slot learning a note (-1 none)
 static LEARN: AtomicI32 = AtomicI32::new(-1);
 /// what the page shows, per slot: state, where it plays (0..1), length (s), its note (-1 none)
@@ -219,6 +225,16 @@ pub fn note_on(note: u8) {
 
 /// MIDI Start (engine.rs, the router).
 pub fn midi_start() { START_HIT.store(true, Relaxed); }
+/// MIDI Stop and Continue (engine.rs, the router): only with [set_follow]
+pub fn midi_stop() { STOP_HIT.store(true, Relaxed); }
+pub fn midi_continue() { CONT_HIT.store(true, Relaxed); }
+
+/// The loops follow the clock master's transport (0.29.1, on by default):
+///  - Stop: every slot playing stops (its 5 ms fade), every slot armed is let go; both are remembered;
+///  - Start (or Continue): the slots remembered, the ones playing or armed now, and the ones started by Start all
+///    start again from their beginning, on the Start itself (beat 0).
+/// Off: as before, Start starts the slots set to "Start" only, and Stop does nothing to them.
+pub fn set_follow(on: bool) { FOLLOW.store(on, Relaxed); }
 
 /// (tempo, beat, true when it is the MIDI clock's): the pad's (fx.rs)
 #[cfg(not(test))]
@@ -396,8 +412,28 @@ pub fn process_split(parts: &mut [f32], n2: usize, ext: &[f32], ext_late_frames:
     if n == 0 || parts.len() < PARTS * n2 { return; }
     let (bpm, midi_beat, midi) = clock();
     let bpf = bpm / 60.0 / SR;
+    let follow = FOLLOW.load(Relaxed);
+    let stop_hit = STOP_HIT.swap(false, Relaxed) && follow;
+    // (Continue: as Start, the slots from their beginning; the beat is not reset)
+    let go_hit = CONT_HIT.swap(false, Relaxed) && follow;
     let start_hit = START_HIT.swap(false, Relaxed);
     let mut g = lock();
+    if stop_hit {
+        for i in 0..SLOTS {
+            let s = &mut g.slots[i];
+            let on = matches!(s.state, State::Playing | State::Stopping | State::Armed);
+            if s.buf.is_none() || !on { continue; }
+            if s.state == State::Armed { s.state = State::Ready; } else { s.out = true; s.stop_at_end = false; }
+            g.resume[i] = true;
+        }
+    }
+    // with follow, Start starts every slot remembered or running (and those set to Start), all from their beginning
+    let restart: [bool; SLOTS] = std::array::from_fn(|i| {
+        let s = &g.slots[i];
+        (start_hit || go_hit) && follow && s.buf.is_some()
+            && (g.resume[i] || matches!(s.state, State::Playing | State::Stopping | State::Armed) || s.s.trig == TRIG_START)
+    });
+    if start_hit || go_hit { g.resume = [false; SLOTS]; }
     if g.pv.on { preview(&mut g, &mut parts[SLOTS * n2..(SLOTS + 1) * n2]); }
     if g.slots.iter().all(|s| s.state == State::Empty) {
         g.beat += bpf * n as f64;
@@ -422,14 +458,14 @@ pub fn process_split(parts: &mut [f32], n2: usize, ext: &[f32], ext_late_frames:
         };
         // what starts it in this block, and where
         let mut start: Option<usize> = None;
-        match (s.state, s.s.trig) {
+        if restart[i] { start = Some(0) } else { match (s.state, s.s.trig) {
             (State::Armed, TRIG_CLOCK) => start = boundary(b0, bpf, s.s.quant.max(1) as f64, n),
             (State::Armed, TRIG_TOUCH) => start = Some(0),
             (State::Armed | State::Playing, TRIG_NOTE) if note_hit => start = Some(0),
             (State::Armed | State::Playing, TRIG_START) if start_hit => start = Some(0),
             (State::Armed, TRIG_LEVEL) if s.quiet >= QUIET_FRAMES => start = peak_at(s.s.level_db),
             _ => {}
-        }
+        } }
         s.quiet = if quiet_now { s.quiet.saturating_add(n as u32) } else { 0 };
         // a stop at the next step: placed now, done at that frame
         let mut stop_at: Option<usize> = None;
@@ -691,6 +727,10 @@ pub(crate) fn reset_for_test() {
     g.beat = 0.0;
     for i in 0..SLOTS { NOTE_OF[i].store(-1, Relaxed); NOTE_HIT[i].store(false, Relaxed); }
     START_HIT.store(false, Relaxed);
+    STOP_HIT.store(false, Relaxed);
+    CONT_HIT.store(false, Relaxed);
+    FOLLOW.store(true, Relaxed);
+    g.resume = [false; SLOTS];
     LEARN.store(-1, Relaxed);
     GAIN.store(1f32.to_bits(), Relaxed);
     g.src = None;
@@ -731,6 +771,39 @@ mod tests {
         set(0, Settings { trig: TRIG_TOUCH, once: true, ..Default::default() });
         let _ = run(200);
         assert_eq!(state(0), State::Ready as i32 as f32);
+    }
+
+    #[test]
+    fn follow_stop_then_start_restarts_from_the_beginning() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_for_test();
+        load(0, &ramp(1000), 2, 44100).unwrap();
+        load(1, &ramp(1000), 2, 44100).unwrap();
+        load(2, &ramp(1000), 2, 44100).unwrap();
+        set(0, Settings { trig: TRIG_TOUCH, ..Default::default() });
+        set(1, Settings { trig: TRIG_NOTE, ..Default::default() });
+        set(2, Settings { trig: TRIG_TOUCH, ..Default::default() });
+        tap(0);                                          // 0 plays, 1 armed (event), 2 left stopped
+        tap(1);
+        let _ = run(600);
+        assert_eq!(state(0), State::Playing as i32 as f32);
+        midi_stop();
+        let _ = run(512);                                // (the 5 ms fade)
+        assert_eq!(state(0), State::Ready as i32 as f32);
+        assert_eq!(state(1), State::Ready as i32 as f32);
+        midi_start();
+        let o = run(300);
+        assert_eq!(state(0), State::Playing as i32 as f32);
+        assert_eq!(state(1), State::Playing as i32 as f32);
+        assert_eq!(state(2), State::Ready as i32 as f32, "never playing: stays stopped");
+        // both from their beginning: frame 200 plays sample 200 of each (two slots summed)
+        assert!((o[2 * 200] - 400.0).abs() < 2.0, "{}", o[400]);
+        // off: Stop leaves them alone
+        set_follow(false);
+        midi_stop();
+        let _ = run(512);
+        assert_eq!(state(0), State::Playing as i32 as f32);
+        set_follow(true);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use fm1_core::{Bus, Cpu};
 use fm1_map::{Mapper, Out, Profile};
 use fm1_soc::{machine, Action, Board, FlashPart, Soc};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -17,6 +17,9 @@ const RAM_BASE: u32 = 0x01c0_0000;
 const RAM_SIZE: usize = 1 << 20;
 /// Machine time kept ahead of the wall clock while no audio has started yet.
 const LEAD_MS: f64 = 60.0;
+/// the transport bytes reach the firmware this much after the audio queue's length (clocksync.rs): the queue is a
+/// little over its target at times (the emulator runs 20 000 instructions at a time)
+const SYNC_MARGIN_MS: f64 = 3.0;
 /// Frames are stereo i16 at 44.1 kHz: samples per millisecond (both channels).
 const SAMPLES_PER_MS: f64 = 88.2;
 /// Emulator ring: never hold more than this (ms) of sound.
@@ -107,8 +110,17 @@ impl MidiMode {
 enum Cmd {
     Act(Action),
     Midi(Vec<u8>),
+    /// MIDI bytes and when they arrived (ms, CLOCK_MONOTONIC: Android's timestamp): the transport bytes are evened out
+    MidiAt(Vec<u8>, f64),
     Mode(MidiMode, Option<Box<Profile>>),
+    /// a message to the emulated FM-1 over its USB-MIDI (EMU_USB)
+    Usb(Vec<u8>),
 }
+
+/// The emulated FM-1 with its USB cable in (fm1-soc usb.rs: a host enumerates it, then MIDI both ways), from the
+/// next start: what the firmware manager uses to give a backup to the emulated firmware, by the same protocol as to a
+/// real FM-1 (Fm1Backup.kt). Off otherwise: the firmware's USB code costs CPU.
+pub static EMU_USB: AtomicBool = AtomicBool::new(false);
 
 /// Splits a MIDI byte stream (as the USB port delivers it) into whole messages: running status,
 /// real-time bytes in the middle of a message, SysEx skipped.
@@ -181,6 +193,13 @@ struct Router {
     enc_due: [u64; 8],
     /// the knob speed's leftovers per encoder, in quarter detents (|x| < 4)
     enc_frac: [i32; 8],
+    /// the transport bytes (clock, Start, Continue, Stop), scheduled to reach the firmware evenly (clocksync.rs)
+    sync: crate::clocksync::ClockSync,
+    /// when the bytes being read arrived (ms, CLOCK_MONOTONIC)
+    t_arr: f64,
+    /// MASTER's top 7 bits from the panel profile's CC (CC 7 on channel 15), for its low 7 bits (CC 39): 14 bits
+    pot_msb: Option<(u8, u8)>,
+    pot_hi: u8,
 }
 
 /// The knobs' speed, in quarter detents per detent turned: 1 (¼×), 2 (½×), 4 (1×), 8 (2×). It scales KNOB 1-4
@@ -202,7 +221,8 @@ fn scale_detents(clicks: i32, q: i32, frac: &mut i32) -> i32 {
 
 impl Router {
     fn new() -> Self {
-        Router { mode: MidiMode::ClockOnly, mapper: None, parser: MidiParser::default(), outs: Vec::new(), enc_q: [0; 8], enc_due: [0; 8], enc_frac: [0; 8] }
+        Router { mode: MidiMode::ClockOnly, mapper: None, parser: MidiParser::default(), outs: Vec::new(), enc_q: [0; 8], enc_due: [0; 8], enc_frac: [0; 8],
+                 sync: Default::default(), t_arr: 0.0, pot_msb: None, pot_hi: 0 }
     }
 
     fn set_mode(&mut self, m: &mut Machine, mode: MidiMode, profile: Option<Box<Profile>>) {
@@ -283,8 +303,11 @@ impl Router {
         // transport and clock always reach the firmware (active sensing and reset do not); the pad's clock hears them
         if st == 0xf8 { crate::fx::clock_tick() }
         if st == 0xfa { crate::fx::clock_start(); crate::loops::midi_start(); }
+        if st == 0xfb { crate::loops::midi_continue(); }
+        if st == 0xfc { crate::loops::midi_stop(); }
         if (0xf8..=0xfc).contains(&st) {
-            m.soc.periph.apply(&Action::Midi { b: st });
+            // to the firmware evenly spaced, a fixed time after they came (clocksync.rs; the machine loop plays them)
+            self.sync.push(st, self.t_arr);
             return;
         }
         if st >= 0xf8 {
@@ -301,8 +324,37 @@ impl Router {
         match self.mode {
             MidiMode::ClockOnly => {}
             MidiMode::Panel if panel => {
+                let before = self.outs.len();
                 let outs = &mut self.outs;
                 self.mapper.as_mut().unwrap().feed(msg, &mut |o| outs.push(o));
+                // MASTER: what the panel sets is the screen's pot too (Native.potIn), and a CC 39 after the CC 7 that
+                // set it gives its low bits (LOOM-8's PANEL MIDI sends MASTER as CC 7 then CC 39, 14 bits)
+                let mut set = None;
+                for o in &self.outs[before..] {
+                    if let Out::Adc { ch, value } = o { if *ch == fm1_map::POT_ADC { set = Some(*value); } }
+                }
+                // what the panel presses and turns, for the screen's panel to show it (Native.panelIn)
+                for o in &self.outs[before..] {
+                    match *o {
+                        Out::Key { id, down, .. } if (id as u32) < 64 => {
+                            if down { sh.panel_held.fetch_or(1 << id, Ordering::Relaxed); }
+                            else { sh.panel_held.fetch_and(!(1u64 << id), Ordering::Relaxed); }
+                        }
+                        Out::Enc { enc, clicks } if (enc as usize) < 8 => { sh.panel_enc[enc as usize].fetch_add(clicks, Ordering::Relaxed); }
+                        _ => {}
+                    }
+                }
+                if let Some(v) = set {
+                    self.pot_msb = if st & 0xf0 == 0xb0 && msg.len() == 3 && msg[1] < 32 { Some((st, msg[1])) } else { None };
+                    if self.pot_msb.is_some() { self.pot_hi = msg[2]; }
+                    sh.pot_in.store(v as u32 | 1 << 16, Ordering::Relaxed);
+                } else if let (Some((s7, c7)), true) = (self.pot_msb, msg.len() == 3) {
+                    if st == s7 && msg[1] == c7 + 32 {
+                        let v = (((self.pot_hi as u32) << 7 | msg[2] as u32) >> 4).min(1023) as u16;
+                        self.outs.push(Out::Adc { ch: fm1_map::POT_ADC, value: v });
+                        sh.pot_in.store(v as u32 | 1 << 16, Ordering::Relaxed);
+                    }
+                }
             }
             // Thru, or Panel on a board that has no panel to drive (SMK-37): as it comes
             _ => {
@@ -316,6 +368,16 @@ impl Router {
 
 /// State shared between the machine thread, the audio threads and the UI (through JNI).
 pub struct Shared {
+    /// what the emulated FM-1 sent over its USB-MIDI (EMU_USB), and its product once enumerated
+    usb_in: Mutex<VecDeque<Vec<u8>>>,
+    usb_product: Mutex<Option<String>>,
+    /// MASTER as the panel profile last set it (bit 16: new since the screen read it), for the screen's pot
+    pot_in: AtomicU32,
+    /// the panel profile's keys and buttons held (bit = matrix id), and each encoder's detents turned (all told)
+    panel_held: AtomicU64,
+    panel_enc: [AtomicI32; 8],
+    /// the clock to the firmware: [spread as it came, as played (ms), how late the trend is put, the delay (ms)]
+    clock_info: Mutex<[f32; 4]>,
     emu: Mutex<VecDeque<i16>>,
     ext: Mutex<VecDeque<i16>>,
     lcd: Mutex<Vec<u16>>,
@@ -355,6 +417,12 @@ pub struct Shared {
 impl Shared {
     fn new() -> Self {
         Shared {
+            usb_in: Mutex::new(VecDeque::new()),
+            usb_product: Mutex::new(None),
+            pot_in: AtomicU32::new(0),
+            panel_held: AtomicU64::new(0),
+            panel_enc: [const { AtomicI32::new(0) }; 8],
+            clock_info: Mutex::new([0.0; 4]),
             emu: Mutex::new(VecDeque::new()),
             ext: Mutex::new(VecDeque::new()),
             lcd: Mutex::new(vec![0u16; 240 * 240]),
@@ -399,6 +467,9 @@ impl Engine {
     /// Boot a firmware package (.fwsc). `flash`: what an earlier run saved (`stop`, `saved_if_changed`: state.rs).
     pub fn start(pkg: &[u8], flash: Option<&[u8]>, mhz: u64, new_chip: bool) -> Result<Engine, String> {
         let mut m = Machine::new(pkg, flash, mhz, new_chip)?;
+        if EMU_USB.load(Ordering::Relaxed) {
+            m.soc.usb_plug(); // (the cable, and the host's frame every millisecond)
+        }
         let shared = Arc::new(Shared::new());
         let (tx, rx) = mpsc::channel::<Cmd>();
         let sh = shared.clone();
@@ -444,6 +515,34 @@ impl Engine {
     /// What reaches the firmware depends on the mode (see [`MidiMode`]).
     pub fn midi(&self, bytes: &[u8]) {
         let _ = self.tx.send(Cmd::Midi(bytes.to_vec()));
+    }
+    /// The same, with when they arrived (ms, CLOCK_MONOTONIC): the clock is evened out from there.
+    pub fn midi_at(&self, bytes: &[u8], t_ms: f64) {
+        let _ = self.tx.send(Cmd::MidiAt(bytes.to_vec(), t_ms));
+    }
+    /// MASTER as the panel last set it (0..1023), once (None when it has not changed since).
+    pub fn pot_in(&self) -> Option<u16> {
+        let v = self.shared.pot_in.swap(0, Ordering::Relaxed);
+        if v >> 16 != 0 { Some((v & 0xffff) as u16) } else { None }
+    }
+    /// What the panel profile holds (bit = matrix id) and each encoder's detents turned so far.
+    pub fn panel_in(&self) -> (u64, [i32; 8]) {
+        (self.shared.panel_held.load(Ordering::Relaxed), std::array::from_fn(|i| self.shared.panel_enc[i].load(Ordering::Relaxed)))
+    }
+    /// [the clock's spread as it came, as played to the firmware (ms), how late the trend is put, the delay (ms)]
+    pub fn clock_info(&self) -> [f32; 4] { *self.shared.clock_info.lock().unwrap() }
+
+    /// A whole MIDI message (SysEx included) to the emulated FM-1 over its USB cable (EMU_USB at its start).
+    pub fn usb_send(&self, msg: &[u8]) {
+        let _ = self.tx.send(Cmd::Usb(msg.to_vec()));
+    }
+    /// The next whole message the emulated FM-1 sent over USB, if any.
+    pub fn usb_take(&self) -> Option<Vec<u8>> {
+        self.shared.usb_in.lock().unwrap().pop_front()
+    }
+    /// The emulated FM-1's USB product string once a host has enumerated it (EMU_USB), else None.
+    pub fn usb_product(&self) -> Option<String> {
+        self.shared.usb_product.lock().unwrap().clone()
     }
 
     /// Choose what the MIDI port does. `profile_json` (fm1-map format) is needed for `Panel`.
@@ -679,6 +778,8 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
     let (mut last_look, mut looked, mut published) = (Instant::now(), m.soc.flash.mem.clone(), m.soc.flash.mem.clone());
     let (mut moved_at, mut gen) = (Instant::now(), 0u64);
     let mut busy = Duration::ZERO;
+    // the clock's scheduling (clocksync.rs): the emulated time heard against the phone's clock, smoothed
+    let (mut sync_d, mut sync_wall, mut last_sync_info) = (f64::NAN, crate::clocksync::now_ms(), Instant::now());
     // the performance hint (ADPF): how long each window's worth of audio took to make
     let mut hint = crate::hint::Hint::for_this_thread();
     sh.hint.store(hint.is_some(), Ordering::Relaxed);
@@ -689,8 +790,25 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
                 // (the screen's encoders too: a drag sends several detents at once)
                 Cmd::Act(Action::Enc { enc, clicks }) => router.enc(enc, clicks),
                 Cmd::Act(a) => m.soc.periph.apply(&a),
-                Cmd::Midi(b) => router.bytes(m, sh, &b),
-                Cmd::Mode(mode, p) => router.set_mode(m, mode, p),
+                Cmd::Midi(b) => { router.t_arr = crate::clocksync::now_ms(); router.bytes(m, sh, &b) }
+                Cmd::MidiAt(b, t) => { router.t_arr = t; router.bytes(m, sh, &b) }
+                Cmd::Mode(mode, p) => { router.set_mode(m, mode, p); sh.panel_held.store(0, Ordering::Relaxed) }
+                Cmd::Usb(b) => m.soc.usb.midi_send(&b),
+            }
+        }
+        if m.soc.usb.cable {
+            for ev in m.soc.usb.events.drain(..) {
+                let mut p = sh.usb_product.lock().unwrap();
+                match ev {
+                    fm1_soc::usb::UsbEvent::Configured { product, .. } => *p = Some(product),
+                    _ => *p = None,
+                }
+            }
+            let got = m.soc.usb.midi_take();
+            if !got.is_empty() {
+                let mut q = sh.usb_in.lock().unwrap();
+                q.extend(got);
+                while q.len() > 4096 { q.pop_front(); }
             }
         }
         router.tick(m);
@@ -707,6 +825,25 @@ fn machine_loop(m: &mut Machine, sh: &Shared, rx: mpsc::Receiver<Cmd>) -> Vec<u8
         let target_ms = sh.emu_base_ms.load(Ordering::Relaxed) as f64 + extra_ms;
         let buffered = sh.emu.lock().unwrap().len() as f64 / SAMPLES_PER_MS;
         let behind = if m.soc.periph.audio_halves > 0 { buffered < target_ms } else { emu_ms < real + LEAD_MS };
+        // the transport bytes due (clocksync.rs): the emulated time heard now is at the head of the audio queue; a
+        // byte that came at phone time t is played at emulated time t + (heard - phone) + the queue's length and a
+        // little more, so it is always still ahead of the emulator when it is scheduled: the same delay for all
+        if m.soc.periph.audio_halves > 0 {
+            let wall = crate::clocksync::now_ms();
+            let d = emu_ms - buffered - wall;
+            let dt = wall - sync_wall;
+            sync_wall = wall;
+            if sync_d.is_nan() || (d - sync_d).abs() > 80.0 { sync_d = d; } else { sync_d += (d - sync_d) * (dt / 1000.0).min(1.0); }
+            let k = target_ms + SYNC_MARGIN_MS;
+            router.sync.due(emu_ms - sync_d - k, |b| m.soc.periph.apply(&Action::Midi { b }));
+            if last_sync_info.elapsed() >= Duration::from_millis(500) {
+                last_sync_info = Instant::now();
+                let i = router.sync.info();
+                *sh.clock_info.lock().unwrap() = [i[0], i[1], i[2], k as f32];
+            }
+        } else {
+            router.sync.flush(|b| m.soc.periph.apply(&Action::Midi { b }));
+        }
         if behind {
             let t = Instant::now();
             // a panic in the emulator must not take the app down: it stops the machine, with its reason

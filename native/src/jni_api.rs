@@ -97,6 +97,54 @@ pub extern "system" fn Java_app_fm1mix_Native_pot(_e: JNIEnv, _c: JClass, value:
     with(|e| e.pot(value.clamp(0, 1023) as u16));
 }
 
+/// MIDI bytes and when they arrived (Android's timestamp, System.nanoTime's clock): the transport is evened out.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_midiAt(env: JNIEnv, _c: JClass, bytes: JByteArray, len: jint, t_ns: jni::sys::jlong) {
+    let n = len.max(0) as usize;
+    let mut buf = vec![0i8; n];
+    if env.get_byte_array_region(&bytes, 0, &mut buf).is_ok() {
+        let b: Vec<u8> = buf.iter().map(|&x| x as u8).collect();
+        let now = crate::clocksync::now_ms();
+        let t = t_ns as f64 / 1e6;
+        // (a timestamp of another clock, or none: now)
+        let t = if t_ns > 0 && (t - now).abs() < 1000.0 { t } else { now };
+        with(|e| e.midi_at(&b, t));
+    }
+}
+
+/// MASTER as the panel profile last set it (0..1023), or -1 when it has not changed since the last call.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_potIn(_e: JNIEnv, _c: JClass) -> jint {
+    with(|e| e.pot_in()).flatten().map_or(-1, |v| v as jint)
+}
+
+/// out = [the clock's spread as it came, as played to the firmware (ms), how late the trend is put, the delay (ms)]
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_clockInfo(env: JNIEnv, _c: JClass, out: JFloatArray) {
+    if let Some(i) = with(|e| e.clock_info()) {
+        let _ = env.set_float_array_region(&out, 0, &i);
+    }
+}
+
+/// out (10) = [held ids 0..31, held ids 32..63 (bits), then each encoder's detents turned so far (8)]: what the
+/// plugged FM-1's panel (PANEL MIDI, through the panel profile) presses and turns, for the screen's panel.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_panelIn(env: JNIEnv, _c: JClass, out: jni::objects::JIntArray) {
+    if let Some((held, enc)) = with(|e| e.panel_in()) {
+        let mut v = [0i32; 10];
+        v[0] = held as u32 as i32;
+        v[1] = (held >> 32) as u32 as i32;
+        v[2..].copy_from_slice(&enc);
+        let _ = env.set_int_array_region(&out, 0, &v);
+    }
+}
+
+/// The loops follow the FM-1's Start, Continue and Stop (loops.rs).
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_loopFollow(_e: JNIEnv, _c: JClass, on: jboolean) {
+    crate::loops::set_follow(on != 0);
+}
+
 #[no_mangle]
 pub extern "system" fn Java_app_fm1mix_Native_midi(env: JNIEnv, _c: JClass, bytes: JByteArray, len: jint) {
     let n = len.max(0) as usize;
@@ -585,4 +633,33 @@ pub extern "system" fn Java_app_fm1mix_Native_flacToWav(env: JNIEnv, _c: JClass,
         }
         Err(_) => std::ptr::null_mut(),
     }
+}
+
+/// The emulated FM-1's USB cable (engine.rs EMU_USB), from the next start: the firmware manager restores a backup to
+/// the emulated firmware over it, as to a real FM-1.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_setEmuUsb(_e: JNIEnv, _c: JClass, on: jboolean) {
+    crate::engine::EMU_USB.store(on != 0, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A whole MIDI message (SysEx included) to the emulated FM-1 over its USB cable.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_emuUsbSend(env: JNIEnv, _c: JClass, msg: JByteArray) {
+    if let Ok(b) = env.convert_byte_array(&msg) { with(|e| e.usb_send(&b)); }
+}
+
+/// The next whole message the emulated FM-1 sent over USB, or null.
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_emuUsbTake(env: JNIEnv, _c: JClass) -> jbyteArray {
+    match with(|e| e.usb_take()).flatten() {
+        Some(m) => env.byte_array_from_slice(&m).map(|a| a.into_raw()).unwrap_or(std::ptr::null_mut()),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// The emulated FM-1's USB name once enumerated (its cable in and its firmware's USB up), else "".
+#[no_mangle]
+pub extern "system" fn Java_app_fm1mix_Native_emuUsbProduct(mut env: JNIEnv, _c: JClass) -> jstring {
+    let s = with(|e| e.usb_product()).flatten().unwrap_or_default();
+    jstr(&mut env, &s)
 }

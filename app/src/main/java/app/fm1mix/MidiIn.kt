@@ -14,6 +14,8 @@ class MidiIn(ctx: Context) {
     @Volatile var clockCount = 0L
     /** OCT- (-1) or OCT+ (+1) pressed on a plugged FM-1 lending its panel (PANEL MIDI: note 0 / 1 on channel 15) */
     var onPanelOct: ((Int) -> Unit)? = null
+    /** while the firmware manager talks to the FM-1 (a flash, a backup): what it sends is not the emulated one's */
+    @Volatile var paused = false
 
     private val mm = ctx.getSystemService(Context.MIDI_SERVICE) as MidiManager
     private val devices = mutableListOf<MidiDevice>()
@@ -22,6 +24,7 @@ class MidiIn(ctx: Context) {
     private val receiver = object : MidiReceiver() {
         private val tmp = ByteArray(1024)
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
+            if (paused) return
             val n = minOf(count, tmp.size)
             System.arraycopy(msg, offset, tmp, 0, n)
             for (i in 0 until n) {
@@ -29,7 +32,7 @@ class MidiIn(ctx: Context) {
                 else if (tmp[i] == 0x9E.toByte() && i + 2 < n && tmp[i + 2] > 0 && (tmp[i + 1] == 0.toByte() || tmp[i + 1] == 1.toByte()))
                     onPanelOct?.invoke(if (tmp[i + 1] == 0.toByte()) -1 else 1)
             }
-            Native.midi(tmp, n)
+            Native.midiAt(tmp, n, timestamp)     // (when it came: the clock is evened out from there)
         }
     }
 

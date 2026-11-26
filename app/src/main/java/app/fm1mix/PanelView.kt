@@ -33,6 +33,9 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
     private val bmp = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565)
     private val leds = FloatArray(41)
     private val down = BooleanArray(41)          // by matrix id: held by a finger
+    private val farDown = BooleanArray(41)       // by matrix id: held on the plugged FM-1's panel (PANEL MIDI)
+    private val farEnc = IntArray(8)             // by encoder id: its detents turned there so far, as last shown
+    private var farSeen = false
     private val encTurn = FloatArray(7)          // by index in layout.encs: where the knob points, in degrees
     /** MASTER, 0..1023 (set by the activity: each firmware's own) */
     var potValue = 1023
@@ -86,6 +89,26 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
         System.arraycopy(ledValues, 0, leds, 0, minOf(leds.size, ledValues.size))
         invalidate()
     }
+
+    /**
+     * What the plugged FM-1's panel presses and turns (Native.panelIn: [held ids 0..31, 32..63, detents by encoder
+     * id]): its buttons and keys shown pressed, its encoders turning, as if touched here (the emulated FM-1 already
+     * got them). Called with each refresh; the panel is drawn then anyway.
+     */
+    fun far(v: IntArray) {
+        val held = (v[0].toLong() and 0xFFFFFFFFL) or (v[1].toLong() shl 32)
+        for (id in 0 until 41) farDown[id] = (held shr id) and 1L != 0L
+        for (e in 0 until 8) {
+            val d = v[2 + e] - farEnc[e]
+            farEnc[e] = v[2 + e]
+            if (d == 0 || !farSeen) continue
+            val i = layout.encs.indexOfFirst { it.id == e }
+            if (i >= 0) encTurn[i] = (encTurn[i] + d * 15f) % 360f
+        }
+        farSeen = true
+    }
+
+    private fun held(id: Int) = down[id] || farDown[id]
 
     fun clearScreen() {
         bmp.eraseColor(Color.BLACK)
@@ -162,9 +185,9 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
         for (b in l.buttons) {
             val led = if (powered) leds[b.id].coerceIn(0f, 1f) else 0f
             val tint = if (b.id == 12) green else amber
-            val sink = if (down[b.id]) 4f else 0f
+            val sink = if (held(b.id)) 4f else 0f
             round(c, b.x, b.y + 5f, b.w, b.h, 18f, btnEdge)
-            round(c, b.x, b.y + sink, b.w, b.h, 18f, if (down[b.id]) 0xFF27292C.toInt() else btnFace)
+            round(c, b.x, b.y + sink, b.w, b.h, 18f, if (held(b.id)) 0xFF27292C.toInt() else btnFace)
             if (led > 0.05f) {
                 line.color = mix(btnFace, tint, led)
                 line.strokeWidth = 5f
@@ -183,7 +206,7 @@ class PanelView(ctx: Context, private val part: Int = PART_ALL) : View(ctx) {
         round(c, l.kbX, l.kbY, l.kbW, l.kbH, 36f, 0xFF1A1B1D.toInt())
         for (pass in 0..1) for (k in l.keys) {
             if ((pass == 0) == k.black) continue
-            val held = down[k.id]
+            val held = held(k.id)
             val led = if (powered) leds[k.id].coerceIn(0f, 1f) else 0f
             val gap = if (k.black) 0f else 4f
             if (!k.black) {
