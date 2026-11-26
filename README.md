@@ -1,4 +1,4 @@
-# FM1 Mix (bêta, v0.29.1)
+# FM1 Mix (bêta, v0.29.2)
 
 Licence : GPL-3.0-only pour l'ensemble (voir `NOTICE.md` : le découpeur reprend le code de SLOOP).
 
@@ -18,8 +18,15 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
         |-- MIDI (horloge) -> MidiManager -> MIDI IN émulé (Chordism)
                                            +-> AudioTrack <- mixage <- sortie de l'émulateur
 
-## v0.29.1 : MASTER du FM-1 retenu, horloge régulière vers l'émulé, boucles sur Start/Stop, LEDs de PANEL MIDI
+## v0.29.2 : PANEL MIDI avec Skiff (Skiff-Remote), et tout firmware qui parle le protocole commun
 ### What's new since 0.28 (English)
+
+**0.29.2**
+- **PANEL MIDI with Skiff:** the app now lends the panel of a FM-1 running **Skiff-Remote** (Skiff 2.7.1 with PANEL MIDI, installable from LOOM8-Remote's install page, which now asks which firmware) as it does with LOOM-8.
+  - One common protocol for any firmware (docs/PANEL-MIDI.md): the app asks every USB MIDI device once, the firmware answers with its name and what it leaves aside while lent.
+  - Settings › MIDI shows the FM-1's name and what it sets aside (on Skiff: SYNC OUT, CLICK, USB LEVEL, its MIDI out on channels 15 and 16).
+  - LOOM-8 PANEL MIDI 0.18.2-pm1 keeps working as before.
+- **Skiff-Remote** (the firmware, its own repository): MENU › MIDI › PANEL MIDI, GLO + FX held one second, and MENU › AUDIO › USB PLAY (the phone's sound in the FM-1's headphones and speaker, as on LOOM-8).
 
 **0.29.1**
 - **Hardware MASTER kept:** the on-screen MASTER now follows the plugged FM-1's MASTER (PANEL MIDI) and remembers it. The emulator no longer restarts at a stale level that couldn't be raised.
@@ -62,7 +69,15 @@ mélange sa sortie avec l'audio USB d'un vrai FM-1, et qui reçoit l'horloge MID
 - **Effects page:** a track's dot no longer covers its name.
 - **No late audio on effect changes:** while an effect changes, one audio block plays dry instead of late.
 
-**Still untested on real hardware:** flashing and backups (tested on a computer against the real update loader and an emulated LOOM-8), and everything in 0.29.1.
+**Still untested on real hardware:** flashing and backups (tested on a computer against the real update loader and an emulated LOOM-8), everything in 0.29.1, and Skiff-Remote (its protocol and USB PLAY are tested on a computer; the firmware itself is built only on GitHub).
+
+### En français (0.29.2)
+- **PANEL MIDI avec Skiff** : l'app prête aussi le panneau d'un FM-1 sous **Skiff-Remote** (Skiff 2.7.1 avec PANEL MIDI,
+  installable depuis la page d'installation de LOOM8-Remote, qui demande maintenant quel firmware). Un seul protocole
+  pour tous les firmwares (`docs/PANEL-MIDI.md`) : l'app interroge une fois chaque appareil MIDI USB, le firmware répond
+  avec son nom et ce qu'il met de côté pendant le prêt (affiché dans Réglages › MIDI). LOOM-8 0.18.2-pm1 marche comme avant.
+
+## v0.29.1 : MASTER du FM-1 retenu, horloge régulière vers l'émulé, boucles sur Start/Stop, LEDs de PANEL MIDI
 
 ### En français (0.29.1)
 - **MASTER par PANEL MIDI** : le potard de l'écran suit le MASTER du FM-1 et le garde. Avant, chaque redémarrage de

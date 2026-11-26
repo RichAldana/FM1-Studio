@@ -18,7 +18,8 @@ import java.util.zip.ZipOutputStream
 /**
  * A project: the whole set-up kept in one file, to come back to it (Settings > Project).
  *
- * A ".fm1mix" file in Documents/Fm1mix projects, a zip holding:
+ * A ".fm1mix" file in Documents/FM1 Mix/Projets (before 0.29: Documents/Fm1mix projects, moved there once), a zip
+ * holding:
  *  - project.json: the firmware (its id and name) and its settings in the app (clock, MIDI, profile, its volume, EQ,
  *    octave...), the mixer (the real FM-1, the master, the loops), each loop's settings and name;
  *  - firmware.fm1s: what the firmware saved itself (its patches, presets, projects: its flash, as on a real FM-1);
@@ -30,7 +31,9 @@ import java.util.zip.ZipOutputStream
  * The same zip may be called ".zip" (Exporter > .zip): anything opens it, and so does the app.
  */
 object Project {
-    const val FOLDER = "Fm1mix projects"
+    const val FOLDER = FirmwareBank.ROOT + "/Projets"
+    /** where the projects were before 0.29 */
+    const val OLD_FOLDER = "Fm1mix projects"
     const val EXT = ".fm1mix"
     const val FORMAT = "fm1mix-project"
     const val VERSION = 2
@@ -54,6 +57,23 @@ object Project {
 
     private val collection: Uri get() = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
     private val relPath get() = Environment.DIRECTORY_DOCUMENTS + "/" + FOLDER
+    private val oldPath get() = Environment.DIRECTORY_DOCUMENTS + "/" + OLD_FOLDER
+
+    /** Once: the projects the app saved in Documents/Fm1mix projects moved to Documents/FM1 Mix/Projets (the app's
+     *  own files only; one it cannot move stays where it is, and is still listed). How many moved. */
+    fun migrate(ctx: Context): Int {
+        var n = 0
+        runCatching {
+            val ids = ArrayList<Long>()
+            ctx.contentResolver.query(collection, arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf("$oldPath%"), null)?.use { c -> while (c.moveToNext()) ids += c.getLong(0) }
+            for (id in ids) runCatching {
+                if (ctx.contentResolver.update(ContentUris.withAppendedId(collection, id),
+                        ContentValues().apply { put(MediaStore.MediaColumns.RELATIVE_PATH, "$relPath/") }, null, null) > 0) n++
+            }
+        }
+        return n
+    }
 
     fun clean(name: String) = name.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim().ifEmpty { "Projet" }
 
@@ -80,7 +100,7 @@ object Project {
         }
     }
 
-    /** Save [s] in Documents/Fm1mix projects: over [over] (the project open) when it is still there, else as a new
+    /** Save [s] in Documents/FM1 Mix/Projets: over [over] (the project open) when it is still there, else as a new
      *  file. Its uri and where it went. */
     fun save(ctx: Context, s: Snapshot, over: Uri?): Pair<Uri, String> {
         val cr = ctx.contentResolver
@@ -113,7 +133,7 @@ object Project {
         ctx.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull()
 
-    /** The project's file renamed with it (a file of ours, in Documents/Fm1mix projects): false when it cannot be. */
+    /** The project's file renamed with it (a file of ours, in Documents/FM1 Mix/Projets): false when it cannot be. */
     fun rename(ctx: Context, uri: Uri, name: String): Boolean = runCatching {
         ctx.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, clean(name) + EXT) }, null, null) > 0
     }.getOrDefault(false)
@@ -160,8 +180,8 @@ object Project {
         runCatching {
             ctx.contentResolver.query(collection,
                 arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATE_MODIFIED),
-                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
-                arrayOf("$relPath%", "%$EXT"), "${MediaStore.MediaColumns.DATE_MODIFIED} DESC")?.use { c ->
+                "(${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?) AND ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
+                arrayOf("$relPath%", "$oldPath%", "%$EXT"), "${MediaStore.MediaColumns.DATE_MODIFIED} DESC")?.use { c ->
                 while (c.moveToNext()) {
                     val n = c.getString(1) ?: continue
                     out += Triple(n.removeSuffix(EXT), ContentUris.withAppendedId(collection, c.getLong(0)), c.getLong(2) * 1000)

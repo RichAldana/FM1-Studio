@@ -409,3 +409,30 @@ Ce qui reste à faire ou à décider, tenu à jour au fil des versions (dernièr
 - Vidéo explicative : « prototype » à remplacer par « bêta ».
 - Le lien GitHub de ton fork, pour le post et les crédits.
 - Vérifier la ligne de crédits RemoteFM1 / Felucca / Harbor (ce que chacun a apporté).
+
+## Skiff-Remote et le protocole PANEL MIDI commun (0.29.2)
+- **À essayer sur le vrai FM-1** : Skiff-Remote 2.7.1-pm1 n'a été compilé que par GitHub (pas d'outils JieLi ici).
+  Vérifier : l'app le trouve (nom « Skiff v2.7.1-pm1 » dans Réglages › MIDI), GLO + FX une seconde dans les deux sens,
+  les LEDs, le MASTER (reprise sans saut au retour), et **USB PLAY** (le son du téléphone dans le casque du FM-1 :
+  le plus incertain, le flux USB de sortie n'existait pas dans Skiff).
+- Faire passer LOOM8-Remote au protocole commun (`panel_link.c` tel quel, `F0 7D 50 4D`) à sa prochaine version ;
+  l'app garde l'ancien chemin (`7D 46 4C 30/31`) pour 0.18.2-pm1.
+- Licences : `panel_link.c` et le code USB repris de felucca-bsp sont en MPL-2.0, mis dans Skiff (GPL-3.0) ; à faire
+  confirmer par une personne (felucca-bsp ne porte pas la mention « Incompatible With Secondary Licenses »).
+
+## Enregistrement armé et bouton STOP général (demandé le 25 novembre)
+- **Armer l'enregistrement** : un appui sur le bouton d'enregistrement l'arme au lieu de le lancer tout de suite.
+  - Si tout est en lecture : il démarre au début de la mesure suivante.
+  - Si tout est à l'arrêt : il démarre à la première note jouée.
+  - Un second appui pendant qu'il est armé l'annule.
+- **Durée** (page Enregistrement) : choisir le nombre de mesures à enregistrer (1, 2, 4, 8, 16...) ou « sans limite »
+  (c'est l'utilisateur qui arrête). Avec un nombre de mesures, l'arrêt tombe pile sur la fin de la dernière mesure.
+- **Bouton STOP général** sur l'interface : arrête la lecture de tout d'un coup (l'émulé, les boucles, le séquenceur,
+  et l'enregistrement en cours s'il y en a un).
+
+## Choix du bandeau : clavier piano ou boîte à rythmes (demandé le 25 novembre)
+- Dans les paramètres globaux, choisir le type de bandeau du bas : **clavier piano**, **bande de pads de boîte à rythmes**
+  (dans l'esprit d'une 808 ou d'une 909 : une rangée de pads numérotés, par exemple 16 pas), ou **les deux** dans le
+  même bandeau (par exemple un étage chacun).
+- À décider plus tard : ce que jouent les pads (les 27 notes du FM-1, ou les pas du séquenceur), et comment le
+  PANEL MIDI et l'enregistrement les voient.

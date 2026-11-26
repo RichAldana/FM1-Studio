@@ -35,12 +35,15 @@ class AudioIo(private val ctx: Context) {
     /** The FM-1 read straight from USB (UsbAudioIn): when Android offers no USB input, or [ownDriver]. */
     private val usbIn = UsbAudioIn(ctx)
     /**
-     * While the sound plays on the phone, the FM-1 is read by the app's own driver even when Android offers it as an
-     * input: a Pixel 8a offers it since Android 16, and its capture comes out crackling, metallic and muffled (the
-     * app's driver, used on that phone before, was clean). Played on the FM-1, Android's input is kept: taking the
-     * FM-1's audio from Android's driver could also take away its USB output.
+     * The FM-1 is read by the app's own driver even when Android offers it as an input: a Pixel 8a offers it since
+     * Android 16, and its capture comes out crackling, metallic and muffled (the app's driver, used on that phone
+     * before, was clean). Since 0.29 whatever the output: played on the FM-1 too. Taking the FM-1's audio input from
+     * Android may take its USB output away with it on some phones: then [ownBreaksOutput], and Android's input again.
      */
     @Volatile var ownDriver = true
+    /** reading the FM-1 ourselves took Android's USB output to it away (seen once): played on the FM-1, Android's
+     *  input is used again, until the app starts again */
+    @Volatile private var ownBreaksOutput = false
 
     /** The capture again (the output changed: the driver to use may change with it). */
     fun restartCapture() { if (running) Thread { stopCapture(); startCapture() }.start() }
@@ -56,6 +59,13 @@ class AudioIo(private val ctx: Context) {
             if (added.any { isUsb(it) }) Thread { startCapture() }.start()
         }
         override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) {
+            // our driver holds the FM-1's input, and Android's output to it went with it: give the input back
+            if (target == OUT_FM1 && usbIn.active && usbIn.candidate() != null && removed.any { isUsb(it) && it.isSink }) {
+                ownBreaksOutput = true
+                Thread { stopCapture(); startCapture() }.start()
+                main.post { captureState = tr("le pilote de l'app retirait la sortie vers le FM-1 : capture rendue à Android (si le son ne revient pas sur le FM-1, rebranche le câble)",
+                    "the app's driver took the output to the FM-1 away: capture given back to Android (if the sound does not come back on the FM-1, replug the cable)") }
+            }
             route()
             if (removed.any { isUsb(it) }) {
                 // the FM-1 really gone; claiming its audio interface must not stop what reads it
@@ -212,7 +222,7 @@ class AudioIo(private val ctx: Context) {
     fun startCapture(): String {
         if (!running || rec != null || usbIn.active) return captureStatus()
         if (!captureAllowed) { captureState = tr("capture non autorisée", "capture not allowed"); return captureState }
-        val own = ownDriver && target == OUT_PHONE && usbIn.candidate() != null
+        val own = ownDriver && (target == OUT_PHONE || !ownBreaksOutput) && usbIn.candidate() != null
         val dev = usbInput()
         if (dev == null || own) {                     // read the FM-1 ourselves (Android offers no USB input, or [ownDriver])
             captureState = usbIn.start()
